@@ -1,0 +1,23 @@
+# Secrets
+.env
+token.json
+credentials.json
+*_sa_key.json
+
+# Dev / test (not needed in image)
+tests/
+scripts/
+requirements-dev.txt
+README.md
+.env.example
+.gitignore
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+
+# VCS
+.git/

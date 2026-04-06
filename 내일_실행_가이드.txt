@@ -1,0 +1,226 @@
+================================================================
+  TeamWorkHub — 내일 실행 가이드
+  (코드/테스트 완성 상태. 키 발급 + 실행만 남음)
+================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 0. 전제 확인
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+아래 두 가지가 있어야 시작 가능:
+  - Google 계정 (Gmail 동기화할 계정)
+  - GCP 프로젝트 (없으면 console.cloud.google.com → 새 프로젝트)
+
+프로젝트 폴더: C:/Users/ParkEunJin/teamworkhub/
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1. GCP API 활성화
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+console.cloud.google.com → 해당 프로젝트 선택
+
+아래 두 API 검색해서 각각 "사용" 클릭:
+  - Gmail API
+  - Google Drive API
+
+(또는 터미널에서 한 번에)
+  gcloud services enable gmail.googleapis.com drive.googleapis.com
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2. OAuth 동의 화면 설정
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Cloud Console → APIs & Services → OAuth 동의 화면
+
+  1. User Type: "외부(External)" 선택 → 만들기
+  2. 앱 이름: TeamWorkHub (아무거나 OK)
+     사용자 지원 이메일: 본인 Gmail
+  3. 범위(Scopes): 스킵 (나중에 코드가 자동 요청)
+  4. 테스트 사용자: "+ ADD USERS" → 본인 Gmail 주소 추가
+     ※ 이 단계 빠뜨리면 로그인 시 "액세스 차단됨" 오류 남
+
+  → 저장 후 완료
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3. OAuth 2.0 클라이언트 ID 생성
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Cloud Console → APIs & Services → 사용자 인증 정보(Credentials)
+
+  → 상단 "+ 사용자 인증 정보 만들기" → "OAuth 클라이언트 ID"
+
+  설정:
+    애플리케이션 유형: "데스크톱 앱"
+    이름: teamworkhub-desktop (아무거나 OK)
+
+  → 만들기
+
+  → 팝업에서 "JSON 다운로드" 클릭
+  → 다운로드된 파일을 아래 경로로 이동/이름 변경:
+
+      C:/Users/ParkEunJin/teamworkhub/scripts/client_secret.json
+
+  ※ 이 파일은 .gitignore에 등록되어 있어 커밋되지 않음
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 4. Refresh Token 발급
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+터미널에서:
+
+  cd C:/Users/ParkEunJin/teamworkhub
+  py -3 scripts/get_token.py
+
+  → 브라우저가 자동으로 열림
+  → Google 계정 로그인 (동기화할 Gmail 계정)
+  → "TeamWorkHub이(가) 액세스를 요청합니다" → 허용
+  → 터미널에 아래 형식으로 출력됨:
+
+      ============================================================
+      SUCCESS — copy these values into your .env or Secret Manager:
+      ============================================================
+      GOOGLE_OAUTH_CLIENT_ID=123456789-abcdef.apps.googleusercontent.com
+      GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxx
+      GOOGLE_OAUTH_REFRESH_TOKEN=1//04xxxxxxxxxxxxxxxxx
+      ============================================================
+
+  이 세 줄을 복사해서 STEP 5에서 사용
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 5. Drive 폴더 ID 확인
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Google Drive (drive.google.com) 접속
+
+  → 싱크 결과물을 저장할 폴더를 하나 만들거나 기존 폴더 열기
+    (Obsidian vault 폴더 또는 새 폴더)
+
+  → 주소창 URL 확인:
+      https://drive.google.com/drive/folders/1ABCDEFGxxxxxxxxxxxxxxx
+                                              ↑ 이 부분이 폴더 ID
+
+  → 복사해두기
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 6. .env 파일 작성
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  cd C:/Users/ParkEunJin/teamworkhub
+  copy .env.example .env     (Windows)
+  # 또는
+  cp .env.example .env       (Git Bash)
+
+  .env 파일을 메모장이나 VS Code로 열어서 아래 항목 입력:
+
+  ┌─────────────────────────────────────────────────────┐
+  │ DRIVE_OUTPUT_FOLDER_ID=  ← STEP 5에서 복사한 폴더 ID  │
+  │                                                     │
+  │ GOOGLE_OAUTH_CLIENT_ID=     ← STEP 4 출력값         │
+  │ GOOGLE_OAUTH_CLIENT_SECRET= ← STEP 4 출력값         │
+  │ GOOGLE_OAUTH_REFRESH_TOKEN= ← STEP 4 출력값         │
+  │                                                     │
+  │ GMAIL_LABEL_ID=INBOX        ← 일단 INBOX로 시작      │
+  │ TIMEZONE=Asia/Seoul                                 │
+  │ LOG_FORMAT=pretty           ← 로컬 dev용 가독성 포맷  │
+  │ LOG_LEVEL=INFO                                      │
+  └─────────────────────────────────────────────────────┘
+
+  ※ GMAIL_LABEL_ID: 특정 라벨만 동기화하려면
+    Gmail → 설정 → 라벨 → 해당 라벨 URL의 label 파라미터 값 사용
+    일단은 INBOX 그대로 두고 테스트
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 7. 로컬 서버 실행 & E2E 테스트
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+터미널 A — 서버 실행:
+
+  cd C:/Users/ParkEunJin/teamworkhub
+  py -3 -m pip install -r requirements-dev.txt   (첫 실행 시)
+  py -3 -m src
+
+  → 아래처럼 뜨면 정상:
+      INFO:     Started server process
+      INFO:     Uvicorn running on http://0.0.0.0:8080
+
+터미널 B — API 호출:
+
+  # 헬스 체크
+  curl http://localhost:8080/health
+  → {"status":"ok","service":"teamworkhub"}
+
+  # 동기화 실행
+  curl -X POST http://localhost:8080/sync
+  → {"status":"ok","run_id":"a1b2c3d4","processed":3,"skipped":0,"errors":0}
+
+기대 결과:
+  - status: "ok"  이면 성공
+  - status: "skipped"  이면 .env 값이 비어 있음 → STEP 6 재확인
+  - status: "error"    이면 OAuth 토큰 문제 → STEP 4 재실행
+  - processed > 0  이면 Drive 폴더에 .md 파일 생성됨 → Drive 확인
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 8. Cloud Run 배포 (로컬 테스트 성공 후)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+README.md §Deploy to Cloud Run 참조.
+순서: API 활성화 → SA 생성 → Secret Manager 등록 → 빌드 → 배포 → Scheduler 등록
+
+Secret Manager에 올릴 값 (STEP 4 출력값):
+  gcloud secrets create twh-oauth-client-id     --replication-policy=automatic
+  gcloud secrets create twh-oauth-client-secret --replication-policy=automatic
+  gcloud secrets create twh-oauth-refresh-token --replication-policy=automatic
+
+  echo -n "YOUR_CLIENT_ID"      | gcloud secrets versions add twh-oauth-client-id     --data-file=-
+  echo -n "YOUR_CLIENT_SECRET"  | gcloud secrets versions add twh-oauth-client-secret  --data-file=-
+  echo -n "YOUR_REFRESH_TOKEN"  | gcloud secrets versions add twh-oauth-refresh-token  --data-file=-
+
+  ※ YOUR_xxx 자리에 실제 값 입력 (따옴표 포함해서 붙여넣기)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+트러블슈팅
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+● 브라우저에서 "액세스 차단됨 (Error 403: access_denied)"
+  → STEP 2에서 테스트 사용자에 본인 Gmail 추가 안 한 경우
+  → Cloud Console → OAuth 동의 화면 → 테스트 사용자 → 본인 계정 추가
+
+● curl 결과 status: "skipped" + note에 env var 목록
+  → .env 파일 값이 비어 있거나 로드 안 됨
+  → py -3 -m src 로 실행했는지 확인 (uvicorn 직접 실행 시 dotenv 로드 안 됨)
+
+● curl 결과 status: "error" + "OAuth credential refresh failed"
+  → Refresh Token이 잘못됨 → STEP 4 다시 실행
+  → 또는 Gmail/Drive API가 활성화 안 됨 → STEP 1 재확인
+
+● get_token.py 실행 시 "This app isn't verified" 경고
+  → "Advanced" → "Go to TeamWorkHub (unsafe)" 클릭해서 진행
+  → 테스트 단계에서는 정상 동작
+
+● Drive에 파일이 안 생김 (processed: 0)
+  → INBOX에 메시지가 없는 경우 정상 (Gmail에서 메일 확인)
+  → GMAIL_LABEL_ID가 잘못된 경우 → INBOX로 변경 후 재시도
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+참고 URL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+GCP 콘솔:        https://console.cloud.google.com
+Gmail API:       https://console.cloud.google.com/apis/library/gmail.googleapis.com
+Drive API:       https://console.cloud.google.com/apis/library/drive.googleapis.com
+OAuth 동의화면:  https://console.cloud.google.com/apis/credentials/consent
+사용자 인증정보: https://console.cloud.google.com/apis/credentials
+Google Drive:    https://drive.google.com
+
+================================================================
