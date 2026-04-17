@@ -47,14 +47,15 @@ def configure_logging() -> None:
     level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
 
-    # On Windows, sys.stdout may default to a narrow encoding (e.g. cp949).
-    # Reconfigure to UTF-8 so log messages with non-ASCII characters (e.g.
-    # em-dashes, Korean text) don't raise UnicodeEncodeError at emit time.
+    # On Windows, sys.stdout/stderr may default to a narrow encoding (e.g.
+    # cp949).  Reconfigure both to UTF-8 so log messages with non-ASCII
+    # characters (em-dashes, Korean text) don't raise UnicodeEncodeError.
     if sys.platform == "win32":
-        try:
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
 
     handler = logging.StreamHandler(sys.stdout)
     if fmt == "pretty":

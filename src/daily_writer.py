@@ -30,6 +30,15 @@ _THREAD_PREFIX_RE = re.compile(
     r"^(?:re|fw|fwd|회신|전달|답장|답변)\s*:\s*", flags=re.IGNORECASE
 )
 
+# 요일별 정기 업무 (0=월 ~ 4=금, 5=토/6=일은 항목 없음)
+_RECURRING_TASKS: dict[int, str] = {
+    0: "RPA",
+    1: "로직점검",
+    2: "수정기",
+    3: "목정기",
+    4: "금정기",
+}
+
 
 def filename_for_date(date_str: str) -> str:
     """Return the Daily Note filename for *date_str* (``YYYY-MM-DD``).
@@ -56,6 +65,7 @@ def compose_daily(
     period_end: str,
     timezone_name: str = "Asia/Seoul",
     daily_folder: str = "TeamWorkHub_Daily",
+    note_folder: str = "",
 ) -> str:
     """Return a Daily Note Markdown string aggregating overnight emails.
 
@@ -67,11 +77,15 @@ def compose_daily(
         timezone_name: Timezone label shown in the note header.
         daily_folder:  Obsidian folder name for daily notes (used in Dataview
                        queries). Defaults to "TeamWorkHub_Daily".
+        note_folder:   Obsidian folder name for individual email notes. When set,
+                       wiki-links include the folder path so Obsidian resolves
+                       cross-folder links correctly (e.g. "TeamWorkHub/제목").
 
     Returns a UTF-8 string ready to be written as a .md file.
     """
     tz_short = timezone_name.split("/")[-1] if "/" in timezone_name else timezone_name
     count = len(messages)
+    note_date = _date.fromisoformat(date_str)
 
     lines: list[str] = []
 
@@ -100,8 +114,12 @@ def compose_daily(
         for msg, ar in messages:
             subject = msg.subject or "(제목 없음)"
             wiki_name = filename_for_subject(subject).removesuffix(".md")
-            tag = f"#{ar.assignees[0]}" if ar.assignees else "#미지정"
-            lines.append(f"- [ ] [[{wiki_name}]] {tag}")
+            if note_folder:
+                wiki_link = f"{note_folder}/{wiki_name}|{wiki_name}"
+            else:
+                wiki_link = wiki_name
+            tags = " ".join(f"#{a}" for a in ar.assignees) if ar.assignees else "#미지정"
+            lines.append(f"- [ ] [[{wiki_link}]] {tags}")
     else:
         lines.append("- [ ]")
 
@@ -109,7 +127,11 @@ def compose_daily(
 
     # Static sections
     lines.append("#### 정기적인 일")
-    lines.append("- [ ]")
+    recurring = _RECURRING_TASKS.get(note_date.weekday())
+    if recurring:
+        lines.append(f"- [ ] {recurring}")
+    else:
+        lines.append("- [ ]")
     lines.append("")
 
     lines.append("#### Schedule (구글 캘린더 연동)")
@@ -126,8 +148,13 @@ def compose_daily(
     lines.append("")
 
     # ── History (3 Dataview blocks) ──────────────────────────────────── #
-    note_date = _date.fromisoformat(date_str)
-    yesterday = note_date - timedelta(days=1)
+    # 월요일이면 "어제" = 금요일 (주말엔 daily note 없음)
+    if note_date.weekday() == 0:
+        prev_work_day = note_date - timedelta(days=3)
+        prev_label = f"지난 금요일 ({prev_work_day.isoformat()})"
+    else:
+        prev_work_day = note_date - timedelta(days=1)
+        prev_label = f"Yesterday ({prev_work_day.isoformat()})"
     week_ago = note_date - timedelta(days=7)
 
     lines.append("### History")
@@ -138,10 +165,10 @@ def compose_daily(
     lines.append(f'WHERE file.name = "{date_str}" AND !completed')
     lines.append("```")
     lines.append("")
-    lines.append(f"**Yesterday ({yesterday.isoformat()})**")
+    lines.append(f"**{prev_label}**")
     lines.append("```dataview")
     lines.append(f'TASK FROM "{daily_folder}"')
-    lines.append(f'WHERE file.name = "{yesterday.isoformat()}" AND !completed')
+    lines.append(f'WHERE file.name = "{prev_work_day.isoformat()}" AND !completed')
     lines.append("```")
     lines.append("")
     lines.append(f"**1 Week ago ({week_ago.isoformat()})**")

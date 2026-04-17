@@ -110,17 +110,26 @@ def _collect_messages(
                           extra={"run_id": run_id, "message_id": msg_id, "error": str(exc)})
                 continue
 
-            analysis = analyze_email(msg.subject, msg.sender, msg.body_text, c.gemini_api_key)
-            if not analysis.assignees:
-                analysis.assignees = extract_assignees(
-                    msg.subject, msg.sender, msg.body_text, ""
-                )
+            try:
+                analysis = analyze_email(msg.subject, msg.sender, msg.body_text, c.gemini_api_key, msg.to, msg.cc)
+                if not analysis.assignees:
+                    analysis.assignees = extract_assignees(
+                        msg.subject, msg.sender, msg.body_text, "", msg.to, msg.cc
+                    )
+            except Exception as exc:
+                log.warning(f"{label} -- analyze/extract failed, using fallback",
+                            extra={"run_id": run_id, "message_id": msg_id, "error": str(exc)})
+                from src.summarizer import AnalysisResult, _fallback_summary
+                analysis = AnalysisResult(summary=_fallback_summary(msg.body_text))
+
             results.append((msg, analysis))
             log.info(f"{label} -- message collected",
-                     extra={"run_id": run_id, "message_id": msg_id})
-            # Avoid Gemini free-tier rate limit (15 RPM)
-            if c.gemini_api_key:
-                time.sleep(1)
+                     extra={"run_id": run_id, "message_id": msg_id,
+                            "analysis_source": analysis.source})
+            # Avoid Gemini free-tier rate limit (15 RPM = 1 call per 4s)
+            # Only sleep when Gemini actually succeeded — skip on fallback.
+            if c.gemini_api_key and analysis.source == "gemini":
+                time.sleep(4)
 
     return results
 
@@ -166,7 +175,7 @@ def sync() -> JSONResponse:
     missing = cfg_module.validate_for_sync(c)
     if missing:
         log.warning(
-            "sync skipped — missing required env vars",
+            "sync skipped -- missing required env vars",
             extra={"run_id": run_id, "missing": missing},
         )
         return JSONResponse(
@@ -187,7 +196,7 @@ def sync() -> JSONResponse:
         drive_svc = build_drive_service(creds)
     except Exception as exc:
         log.error(
-            "sync aborted — could not build Drive service",
+            "sync aborted -- could not build Drive service",
             extra={"run_id": run_id, "error": str(exc)},
         )
         return JSONResponse(
@@ -198,7 +207,7 @@ def sync() -> JSONResponse:
                 "processed": 0,
                 "skipped": 0,
                 "errors": 1,
-                "note": "OAuth credential refresh failed — check token env vars",
+                "note": "OAuth credential refresh failed -- check token env vars",
             },
         )
 
@@ -229,7 +238,7 @@ def sync() -> JSONResponse:
                 gmail_svc = build_gmail_service(creds)
         except Exception as exc:
             log.error(
-                "OAuth failed for account — skipping",
+                "OAuth failed for account -- skipping",
                 extra={"run_id": run_id, "account": account.email, "error": str(exc)},
             )
             errors += 1
@@ -242,7 +251,7 @@ def sync() -> JSONResponse:
             )
         except Exception as exc:
             log.error(
-                "list_messages failed — skipping account",
+                "list_messages failed -- skipping account",
                 extra={"run_id": run_id, "account": account.email, "error": str(exc)},
             )
             errors += 1
@@ -258,7 +267,7 @@ def sync() -> JSONResponse:
                 existing_md = find_file_by_name(drive_svc, md_name, c.drive_output_folder_id)
             except Exception as exc:
                 log.error(
-                    "Drive find_file failed — skipping message",
+                    "Drive find_file failed -- skipping message",
                     extra={"run_id": run_id, "message_id": msg_id, "error": str(exc)},
                 )
                 errors += 1
@@ -266,7 +275,7 @@ def sync() -> JSONResponse:
 
             if existing_md is not None:
                 log.info(
-                    "message already synced — skipped",
+                    "message already synced -- skipped",
                     extra={"run_id": run_id, "message_id": msg_id},
                 )
                 skipped += 1
@@ -312,7 +321,7 @@ def sync() -> JSONResponse:
                 msg = fetch_message(gmail_svc, msg_id)
             except Exception as exc:
                 log.error(
-                    "fetch_message failed — skipping message",
+                    "fetch_message failed -- skipping message",
                     extra={"run_id": run_id, "message_id": msg_id, "error": str(exc)},
                 )
                 errors += 1
@@ -334,7 +343,7 @@ def sync() -> JSONResponse:
                     drive_files.append(df)
                 except Exception as exc:
                     log.error(
-                        "attachment upload failed — continuing without it",
+                        "attachment upload failed -- continuing without it",
                         extra={
                             "run_id": run_id,
                             "message_id": msg_id,
@@ -345,11 +354,17 @@ def sync() -> JSONResponse:
                     # Non-fatal: continue with remaining attachments.
 
             # Analyze with Gemini (optional — defaults when key not set).
-            ar = analyze_email(msg.subject, msg.sender, msg.body_text, c.gemini_api_key)
-            if not ar.assignees:
-                ar.assignees = extract_assignees(
-                    msg.subject, msg.sender, msg.body_text, ""
-                )
+            try:
+                ar = analyze_email(msg.subject, msg.sender, msg.body_text, c.gemini_api_key, msg.to, msg.cc)
+                if not ar.assignees:
+                    ar.assignees = extract_assignees(
+                        msg.subject, msg.sender, msg.body_text, "", msg.to, msg.cc
+                    )
+            except Exception as exc:
+                log.warning("analyze/extract failed, using fallback",
+                            extra={"run_id": run_id, "message_id": msg_id, "error": str(exc)})
+                from src.summarizer import AnalysisResult as _AR, _fallback_summary as _fb
+                ar = _AR(summary=_fb(msg.body_text))
 
             # Compose and upsert Markdown to Drive (commit point).
             # Drive uses md_name (twh_{msgId}.md) for idempotency check.
@@ -487,10 +502,25 @@ def daily(
 
     now = target
     date_str = now.strftime("%Y-%m-%d")
-    period_end = now.replace(hour=8, minute=59, second=59, microsecond=0)
-    period_start = (now - timedelta(days=1)).replace(
-        hour=18, minute=0, second=0, microsecond=0
-    )
+    # Determine email collection window based on day of week.
+    # Monday:   collect Fri 00:00 ~ Sun 23:59 (cover weekend gap)
+    # Sunday:   collect Fri 00:00 ~ Sat 23:59 (weekend catch-up)
+    # Saturday: collect Fri 00:00 ~ Fri 23:59 (just the previous weekday)
+    # Other:    collect previous day only (00:00 ~ 23:59)
+    if now.weekday() == 0:  # Monday
+        range_start_day = now - timedelta(days=3)  # Friday
+        range_end_day = now - timedelta(days=1)    # Sunday
+    elif now.weekday() == 6:  # Sunday
+        range_start_day = now - timedelta(days=2)  # Friday
+        range_end_day = now - timedelta(days=1)    # Saturday
+    elif now.weekday() == 5:  # Saturday
+        range_start_day = now - timedelta(days=1)  # Friday
+        range_end_day = range_start_day
+    else:
+        range_start_day = now - timedelta(days=1)
+        range_end_day = range_start_day
+    period_start = range_start_day.replace(hour=0, minute=0, second=0, microsecond=0)
+    period_end = range_end_day.replace(hour=23, minute=59, second=59, microsecond=0)
     period_label_start = period_start.strftime("%Y-%m-%d %H:%M")
     period_label_end = period_end.strftime("%Y-%m-%d %H:%M")
 
@@ -521,15 +551,41 @@ def daily(
     log.info("daily -- collection complete",
              extra={"run_id": run_id, "email_count": email_count})
 
+    # ── Create individual email notes so daily wiki-links resolve ───── #
+    local_note_dir = c.local_output_dir
+    if local_note_dir and messages_with_summaries:
+        note_dir = Path(local_note_dir)
+        note_dir.mkdir(parents=True, exist_ok=True)
+        individual_at = datetime.now(tz=timezone.utc).isoformat()
+        for msg, ar in messages_with_summaries:
+            try:
+                local_name = filename_for_subject(msg.subject)
+                local_path = note_dir / local_name
+                if not local_path.exists():
+                    # Ensure summary is never empty when body text exists
+                    summary = ar.summary
+                    if not summary and msg.body_text and msg.body_text.strip():
+                        from src.summarizer import _fallback_summary
+                        summary = _fallback_summary(msg.body_text)
+                    note_md = compose(msg, [], individual_at, summary, "", ar)
+                    local_path.write_text(note_md, encoding="utf-8")
+                    log.info("individual note created",
+                             extra={"run_id": run_id, "file": local_name})
+            except Exception as exc:
+                log.warning("individual note write failed",
+                            extra={"run_id": run_id, "error": str(exc)})
+
     # ── Compose & write Daily Note ───────────────────────────────────── #
     local_daily_dir = c.local_daily_output_dir or c.local_output_dir
     daily_folder_name = Path(local_daily_dir).name if local_daily_dir else "TeamWorkHub_Daily"
+    note_folder_name = Path(c.local_output_dir).name if c.local_output_dir else ""
 
     md_name = filename_for_date(date_str)
     md_content = compose_daily(
         messages_with_summaries, date_str,
         period_label_start, period_label_end, c.timezone,
         daily_folder_name,
+        note_folder_name,
     )
 
     daily_folder_id = c.daily_output_folder_id or c.drive_output_folder_id
@@ -590,7 +646,7 @@ def daily(
 
 # ── Weekly digest ───────────────────────────────────────────────────── #
 
-@app.post("/weekly", summary="Generate weekly email digest report")
+@app.post("/weekly", summary="Generate weekly email digest report", deprecated=True)
 def weekly() -> JSONResponse:
     """Collects emails from Monday 00:00 to Friday 23:59 (configured timezone)
     and writes a single Weekly Report: YYYY-WNN.md.
@@ -609,7 +665,11 @@ def weekly() -> JSONResponse:
     run_id = uuid.uuid4().hex[:8]
     c = cfg_module.load()
 
-    log.info("weekly started", extra={"run_id": run_id})
+    log.info("weekly skipped -- endpoint disabled", extra={"run_id": run_id})
+    return JSONResponse(status_code=200, content={
+        "status": "skipped", "run_id": run_id, "week": "",
+        "email_count": 0, "note": "weekly endpoint is disabled",
+    })
 
     missing = cfg_module.validate_for_sync(c)
     if missing:
@@ -683,7 +743,7 @@ def weekly() -> JSONResponse:
 
 # ── Monthly digest ──────────────────────────────────────────────────── #
 
-@app.post("/monthly", summary="Generate monthly email digest report")
+@app.post("/monthly", summary="Generate monthly email digest report", deprecated=True)
 def monthly() -> JSONResponse:
     """Collects emails for the current calendar month and writes YYYY-MM.md.
 
@@ -702,7 +762,11 @@ def monthly() -> JSONResponse:
     run_id = uuid.uuid4().hex[:8]
     c = cfg_module.load()
 
-    log.info("monthly started", extra={"run_id": run_id})
+    log.info("monthly skipped -- endpoint disabled", extra={"run_id": run_id})
+    return JSONResponse(status_code=200, content={
+        "status": "skipped", "run_id": run_id, "month": "",
+        "email_count": 0, "note": "monthly endpoint is disabled",
+    })
 
     missing = cfg_module.validate_for_sync(c)
     if missing:

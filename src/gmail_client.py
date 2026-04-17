@@ -47,6 +47,8 @@ class ParsedMessage:
     thread_id: str
     subject: str       # raw subject — log only [:80]
     sender: str        # "Name <email>" as-is from From header
+    to: str            # To header as-is
+    cc: str            # CC header as-is
     date_utc: str      # ISO-8601 UTC, e.g. "2024-01-15T10:30:00+00:00"
     body_text: str     # plain-text body ── NEVER LOG THIS FIELD
     attachments: list[Attachment] = field(default_factory=list)
@@ -163,6 +165,8 @@ def _parse_message(raw: dict) -> ParsedMessage:
         thread_id=raw.get("threadId", raw["id"]),
         subject=subject,
         sender=headers.get("from", ""),
+        to=headers.get("to", ""),
+        cc=headers.get("cc", ""),
         date_utc=_parse_date(headers.get("date", "")),
         body_text=_extract_body(payload),           # NEVER LOG
         attachments=_extract_attachments(payload),

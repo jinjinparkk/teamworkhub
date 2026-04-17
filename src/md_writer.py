@@ -30,6 +30,55 @@ if TYPE_CHECKING:
     from src.summarizer import AnalysisResult
 
 
+# ── Media / Subsidiary 키워드 (이메일 본문에서 자동 태깅) ─────────── #
+_SUBSIDIARY_KEYWORDS: list[str] = [
+    "SEGR", "SECE", "SEAD", "SEPR", "SECH", "SESAR", "SELV", "SSA",
+    "SEEG", "SEB", "SEJ", "SEAS", "SEHK", "SGE", "SIEL", "SME",
+    "SEDA", "BANGLADESH", "SEI", "SEF", "SEUC", "SEG", "SEH", "SET",
+    "SEMAG", "SETK", "SEWA", "SAMCOL", "SRI_LANKA", "SEM", "SENA",
+    "SELA", "TSE", "SEA", "SEIB", "LA", "SENZ", "SEPAK", "SESP",
+    "SEEA", "SEUK", "GLOBAL", "SECA", "SEBN", "SEASA", "SEPOL",
+    "SEROM", "SECZ", "SEPCO", "SCIC", "SAVINA", "SEAU", "SEIN",
+    "SEIL", "SEUZ", "SEC",
+]
+
+_MEDIA_KEYWORDS: list[str] = [
+    "TRUEVIEW", "WE CHAT", "LINKEDIN", "SQ NEWS", "微信搜一搜",
+    "LINEADS", "INDEPENDENT", "DIRECT", "CM360", "HANGZHOUMAISHOU",
+    "DV360", "TTD", "TENCENT", "BING", "PAID MEDIA", "JINRICHENGZHANG",
+    "NOSP", "URLTARGET", "DISCOVERY +", "小红书", "DUODUO VIDEO", "YDN",
+    "LOCAL OFFLINE PUBLISHER", "AFFILIATE", "PAID SOCIAL", "X", "RED",
+    "BLUETV", "QQ", "SHENGQIANKUAIBAO", "ZEST BUY", "LOCAL PUBLISHER",
+    "IQIYI", "DISPLAY", "MANGO TV", "TENGXUN", "MEITU", "BYTEDANCE",
+    "CRITEO", "TIKTOK", "JULIANG", "XHS", "REDDIT", "PINTEREST",
+    "NAVER", "SINA", "META", "SHIHUO", "ZHIHU", "UC", "360",
+    "SNAPCHAT", "BAIDU", "YAHOO", "GOOGLE ADS", "XANDR", "CTRIP",
+    "PAID SEARCH", "TEADS", "BILIBILI", "WEIXIN", "KAKAO", "SA360",
+]
+
+# 짧은 키워드 (3글자 이하)는 단어 경계 매칭, 긴 키워드는 단순 포함 매칭
+_SHORT_KEYWORD_LEN = 3
+
+
+def _extract_media_subsidiary_tags(text: str) -> list[str]:
+    """Extract matching media/subsidiary keywords from text (case-insensitive)."""
+    upper = text.upper()
+    found: list[str] = []
+    for kw in _MEDIA_KEYWORDS:
+        if len(kw) <= _SHORT_KEYWORD_LEN:
+            if re.search(r"(?<![A-Z0-9])" + re.escape(kw) + r"(?![A-Z0-9])", upper):
+                found.append(kw)
+        elif kw.upper() in upper:
+            found.append(kw)
+    for kw in _SUBSIDIARY_KEYWORDS:
+        if len(kw) <= _SHORT_KEYWORD_LEN:
+            if re.search(r"(?<![A-Z0-9])" + re.escape(kw) + r"(?![A-Z0-9])", upper):
+                found.append(kw)
+        elif kw.upper() in upper:
+            found.append(kw)
+    return found
+
+
 # Chars not allowed in Drive / Obsidian filenames.
 _MSG_ID_UNSAFE = re.compile(r'[<>@\s/\\:*?"\'|#%&=+,;]')
 # Chars not allowed in Obsidian filenames (for subject-based names).
@@ -153,6 +202,25 @@ def compose(
             lines.append(f"  - {tag}")
     else:
         lines.append("tags:")
+
+    # description: summary 한 줄 요약
+    if analysis and analysis.summary:
+        first_line = analysis.summary.strip().splitlines()[0]
+        # "- " prefix 제거
+        desc = first_line.lstrip("- ").strip()
+        lines.append(f"description: {_yaml_scalar(desc)}")
+    else:
+        lines.append("description:")
+
+    # tag: media / subsidiary 키워드 자동 매칭
+    full_text = (message.subject or "") + " " + (message.body_text or "")
+    ms_tags = _extract_media_subsidiary_tags(full_text)
+    if ms_tags:
+        lines.append("tag:")
+        for t in ms_tags:
+            lines.append(f"  - {t}")
+    else:
+        lines.append("tag:")
 
     lines.append("result:")
     lines.append("link:")

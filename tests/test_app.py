@@ -166,6 +166,39 @@ def test_daily_ok_with_mocked_pipeline(monkeypatch):
     assert data["email_count"] == 0
 
 
+def test_daily_monday_uses_friday_period_start(monkeypatch):
+    """On Monday the period_start must be Friday 18:00 (3 days back), not Sunday 18:00."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import src.app as app_mod
+
+    for k, v in _FULL_ENV.items():
+        monkeypatch.setenv(k, v)
+
+    # 2025-04-07 is a Monday
+    monday = datetime(2025, 4, 7, 9, 0, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+    captured: list[str] = []
+
+    original_compose = app_mod.compose_daily
+
+    def _spy_compose(messages, date_str, period_start, period_end, *args, **kwargs):
+        captured.append(period_start)
+        return original_compose(messages, date_str, period_start, period_end, *args, **kwargs)
+
+    patches = _mock_pipeline()
+    with patches[0], patches[1], patches[2], patches[3]:
+        with patch("src.app.compose_daily", side_effect=_spy_compose):
+            with patch("src.app.datetime") as mock_dt:
+                mock_dt.now.return_value = monday
+                mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+                with TestClient(app, raise_server_exceptions=True) as c:
+                    c.post("/daily")
+
+    assert len(captured) == 1
+    # period_start should be "2025-04-04 00:00" (Friday), not "2025-04-06 00:00" (Sunday)
+    assert captured[0].startswith("2025-04-04"), f"Expected Friday start, got: {captured[0]}"
+
+
 # ── /weekly ────────────────────────────────────────────────────────── #
 
 def test_weekly_returns_200(client):
@@ -197,8 +230,8 @@ def test_weekly_ok_with_mocked_pipeline(monkeypatch):
     with patches[0], patches[1], patches[2], patches[3]:
         with TestClient(app, raise_server_exceptions=True) as c:
             data = c.post("/weekly").json()
-    assert data["status"] == "ok"
-    assert data["email_count"] == 0
+    # weekly endpoint is currently disabled (deprecated=True)
+    assert data["status"] == "skipped"
 
 
 # ── /monthly ───────────────────────────────────────────────────────── #
@@ -232,8 +265,8 @@ def test_monthly_ok_with_mocked_pipeline(monkeypatch):
     with patches[0], patches[1], patches[2], patches[3]:
         with TestClient(app, raise_server_exceptions=True) as c:
             data = c.post("/monthly").json()
-    assert data["status"] == "ok"
-    assert data["email_count"] == 0
+    # monthly endpoint is currently disabled (deprecated=True)
+    assert data["status"] == "skipped"
 
 
 # ── /dashboard ─────────────────────────────────────────────────────── #

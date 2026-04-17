@@ -38,6 +38,8 @@ def _parsed_message(
         thread_id=f"thread_{message_id}",
         subject=subject,
         sender=sender,
+        to="",
+        cc="",
         date_utc="2024-01-15T10:30:00+00:00",
         body_text=body_text,
         attachments=attachments or [],

@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 
 import requests
 
+from src.assignee import normalize_name, extract_assignees_from_email
+
 log = logging.getLogger(__name__)
 
 
@@ -33,6 +35,20 @@ class AnalysisResult:
     assignees: list[str] = field(default_factory=list)
     priority: str = "보통"    # "긴급" | "보통" | "낮음"
     category: str = "일반"    # "보고" | "승인요청" | "공지" | "미팅" | "일반"
+    source: str = "fallback"  # "gemini" | "fallback"
+
+def _fallback_summary(body_text: str) -> str:
+    """Generate a simple extractive summary from the email body.
+
+    Used when Gemini is unavailable.  Takes the first 3 non-empty lines
+    and formats them as bullet points so the detail page is still useful.
+    """
+    if not body_text or not body_text.strip():
+        return ""
+    lines = [ln.strip() for ln in body_text.strip().splitlines() if ln.strip()]
+    selected = lines[:3]
+    return "\n".join(f"- {ln}" if not ln.startswith("- ") else ln for ln in selected)
+
 
 _BODY_CHAR_LIMIT = 3_000
 _MODEL = "gemini-2.5-flash"
@@ -82,14 +98,16 @@ def analyze_email(
     sender: str,
     body_text: str,
     api_key: str,
+    to: str = "",
+    cc: str = "",
 ) -> AnalysisResult:
     """Single Gemini call → AnalysisResult (summary, assignees, priority, category).
 
     Returns default AnalysisResult on failure or missing key — never raises.
     Prefer this over separate summarize() + extract_assignees() calls.
     """
-    if not api_key or not body_text.strip():
-        return AnalysisResult()
+    if not api_key or not (body_text or "").strip():
+        return AnalysisResult(summary=_fallback_summary(body_text))
 
     try:
         prompt = _ANALYZE_PROMPT.format(
@@ -107,7 +125,7 @@ def analyze_email(
                 timeout=20,
             )
             if resp.status_code == 429:
-                wait = 15 * (2 ** attempt)  # 15s, 30s, 60s
+                wait = 5 * (2 ** attempt)  # 5s, 10s, 20s
                 log.warning("analyze_email -- 429 rate limit, retrying in %ds (attempt %d/3)",
                             wait, attempt + 1)
                 time.sleep(wait)
@@ -129,7 +147,10 @@ def analyze_email(
         summary = "\n".join(
             b if b.startswith("- ") else f"- {b}" for b in summary_bullets
         )
-        assignees = [str(a).strip() for a in data.get("assignees", []) if str(a).strip()]
+        assignees = [normalize_name(str(a).strip()) for a in data.get("assignees", []) if str(a).strip()]
+        # Gemini가 담당자를 못 찾으면 To/CC 이메일에서 fallback
+        if not assignees and (to or cc):
+            assignees = extract_assignees_from_email(to, cc)
         priority = data.get("priority", "보통") if data.get("priority") in ("긴급", "보통", "낮음") else "보통"
         category = data.get("category", "일반") if data.get("category") in ("보고", "승인요청", "공지", "미팅", "일반") else "일반"
 
@@ -139,11 +160,11 @@ def analyze_email(
             "priority": priority,
             "category": category,
         })
-        return AnalysisResult(summary=summary, assignees=assignees, priority=priority, category=category)
+        return AnalysisResult(summary=summary, assignees=assignees, priority=priority, category=category, source="gemini")
 
     except Exception as exc:
-        log.warning("analyze_email failed - skipping: %s", repr(exc))
-        return AnalysisResult()
+        log.warning("analyze_email failed -- using fallback summary: %s", repr(exc))
+        return AnalysisResult(summary=_fallback_summary(body_text))
 
 
 def summarize(

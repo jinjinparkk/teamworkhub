@@ -152,11 +152,28 @@ class TestComposeDailyStructure:
         assert "TeamWorkHub_Daily" in md
 
     def test_history_has_three_date_blocks(self):
-        """History section contains Today, Yesterday, 1 Week ago."""
-        md = compose_daily([], DATE, START, END, TZ)
+        """History section contains Today, prev-day label, 1 Week ago."""
+        md = compose_daily([], DATE, START, END, TZ)  # DATE = 2025-04-02 수요일
         assert "Today" in md
-        assert "Yesterday" in md
+        assert "Yesterday" in md  # 수요일 → 전날(화요일)
         assert "1 Week ago" in md
+
+    def test_history_monday_shows_friday_label(self):
+        """월요일 daily note에서는 '어제' 대신 '지난 금요일' 표시."""
+        md = compose_daily([], "2025-03-31", START, END, TZ)  # 월요일
+        assert "지난 금요일" in md
+        assert "2025-03-28" in md  # 금요일 날짜
+
+    def test_history_monday_friday_query(self):
+        """월요일 History의 prev_work_day 쿼리가 금요일 파일을 가리킨다."""
+        md = compose_daily([], "2025-03-31", START, END, TZ)  # 월요일
+        assert 'file.name = "2025-03-28"' in md  # 금요일
+
+    def test_history_tuesday_shows_yesterday_label(self):
+        """월요일 외 요일은 'Yesterday' 레이블 그대로."""
+        md = compose_daily([], "2025-04-01", START, END, TZ)  # 화요일
+        assert "Yesterday" in md
+        assert "2025-03-31" in md  # 월요일
 
 
 # ── compose_daily — metadata / header ───────────────────────────────── #
@@ -238,3 +255,36 @@ class TestComposeDailyToDoList:
 
     def test_returns_string(self):
         assert isinstance(compose_daily([], DATE, START, END, TZ), str)
+
+
+# ── compose_daily — 요일별 정기적인 일 ──────────────────────────────── #
+
+class TestComposeDailyRecurringTasks:
+    # DATE = "2025-04-02" → 수요일 (weekday 2)
+    def test_wednesday_has_수정기(self):
+        md = compose_daily([], "2025-04-02", START, END, TZ)  # 수
+        assert "- [ ] 수정기" in md
+
+    def test_monday_has_rpa(self):
+        md = compose_daily([], "2025-03-31", START, END, TZ)  # 월
+        assert "- [ ] RPA" in md
+
+    def test_tuesday_has_로직점검(self):
+        md = compose_daily([], "2025-04-01", START, END, TZ)  # 화
+        assert "- [ ] 로직점검" in md
+
+    def test_thursday_has_목정기(self):
+        md = compose_daily([], "2025-04-03", START, END, TZ)  # 목
+        assert "- [ ] 목정기" in md
+
+    def test_friday_has_금정기(self):
+        md = compose_daily([], "2025-04-04", START, END, TZ)  # 금
+        assert "- [ ] 금정기" in md
+
+    def test_saturday_has_empty_checkbox(self):
+        md = compose_daily([], "2025-04-05", START, END, TZ)  # 토
+        assert "#### 정기적인 일\n- [ ]" in md
+
+    def test_sunday_has_empty_checkbox(self):
+        md = compose_daily([], "2025-04-06", START, END, TZ)  # 일
+        assert "#### 정기적인 일\n- [ ]" in md

@@ -147,7 +147,7 @@ def upload_attachment(
     existing = find_file_by_name(service, name, parent_id)
     if existing:
         log.info(
-            "attachment already in Drive — skipped",
+            "attachment already in Drive -- skipped",
             extra={"message_id": message_id, "att_name": name},
         )
         return existing

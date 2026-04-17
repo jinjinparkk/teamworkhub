@@ -88,7 +88,7 @@ def load() -> Config:
             )
         except (json.JSONDecodeError, TypeError, KeyError) as exc:
             raise ValueError(
-                f"GMAIL_ACCOUNTS_JSON is invalid — check JSON format: {exc}"
+                f"GMAIL_ACCOUNTS_JSON is invalid -- check JSON format: {exc}"
             ) from exc
     else:
         gmail_accounts = ()
