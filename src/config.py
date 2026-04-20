@@ -65,16 +65,14 @@ class Config:
     weekly_output_folder_id: str = ""   # Drive folder for YYYY-WNN.md files
     local_weekly_output_dir: str = ""   # Local Obsidian weekly notes folder
 
-    # ── Monthly digest (optional) ─────────────────────────────────────── #
-    # POST /monthly generates a monthly report (YYYY-MM.md).
-    # Falls back to weekly_output_folder_id → daily → drive when empty.
-    monthly_output_folder_id: str = ""  # Drive folder for YYYY-MM.md files
-    local_monthly_output_dir: str = ""  # Local Obsidian monthly notes folder
-
     # ── Dashboard & assignee pages (optional) ─────────────────────────── #
     # POST /dashboard writes Dashboard.md + per-assignee pages.
     # Assignee pages are also auto-written on each POST /daily run.
     local_dashboard_dir: str = ""       # Local folder for Dashboard.md + assignee pages
+
+    # ── Drive email archive scan (optional) ────────────────────────────── #
+    # POST /scan-archive reads mail folders from a shared Drive folder.
+    drive_email_archive_folder_id: str = ""  # parent folder containing date_sender_subject subfolders
 
 
 def load() -> Config:
@@ -110,9 +108,8 @@ def load() -> Config:
         local_daily_output_dir=os.environ.get("LOCAL_DAILY_OUTPUT_DIR", ""),
         weekly_output_folder_id=os.environ.get("WEEKLY_OUTPUT_FOLDER_ID", ""),
         local_weekly_output_dir=os.environ.get("LOCAL_WEEKLY_OUTPUT_DIR", ""),
-        monthly_output_folder_id=os.environ.get("MONTHLY_OUTPUT_FOLDER_ID", ""),
-        local_monthly_output_dir=os.environ.get("LOCAL_MONTHLY_OUTPUT_DIR", ""),
         local_dashboard_dir=os.environ.get("LOCAL_DASHBOARD_DIR", ""),
+        drive_email_archive_folder_id=os.environ.get("DRIVE_EMAIL_ARCHIVE_FOLDER_ID", ""),
     )
 
 
@@ -121,6 +118,17 @@ def validate_for_sync(cfg: Config) -> list[str]:
     but are currently empty.  Empty list means the config is complete."""
     required = {
         "DRIVE_OUTPUT_FOLDER_ID": cfg.drive_output_folder_id,
+        "GOOGLE_OAUTH_CLIENT_ID": cfg.google_oauth_client_id,
+        "GOOGLE_OAUTH_CLIENT_SECRET": cfg.google_oauth_client_secret,
+        "GOOGLE_OAUTH_REFRESH_TOKEN": cfg.google_oauth_refresh_token,
+    }
+    return [k for k, v in required.items() if not v]
+
+
+def validate_for_scan_archive(cfg: Config) -> list[str]:
+    """Return a list of env-var names required for /scan-archive but currently empty."""
+    required = {
+        "DRIVE_EMAIL_ARCHIVE_FOLDER_ID": cfg.drive_email_archive_folder_id,
         "GOOGLE_OAUTH_CLIENT_ID": cfg.google_oauth_client_id,
         "GOOGLE_OAUTH_CLIENT_SECRET": cfg.google_oauth_client_secret,
         "GOOGLE_OAUTH_REFRESH_TOKEN": cfg.google_oauth_refresh_token,

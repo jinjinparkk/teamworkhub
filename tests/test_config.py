@@ -243,25 +243,9 @@ class TestLoadMultiAccount:
             load()
 
 
-# ── Monthly & Dashboard optional fields ──────────────────────────────── #
+# ── Dashboard optional fields ────────────────────────────────────────── #
 
 class TestOptionalOutputDirs:
-    def test_local_monthly_output_dir_defaults_to_empty(self, monkeypatch):
-        monkeypatch.delenv("LOCAL_MONTHLY_OUTPUT_DIR", raising=False)
-        assert load().local_monthly_output_dir == ""
-
-    def test_local_monthly_output_dir_from_env(self, monkeypatch):
-        monkeypatch.setenv("LOCAL_MONTHLY_OUTPUT_DIR", "/path/to/monthly")
-        assert load().local_monthly_output_dir == "/path/to/monthly"
-
-    def test_monthly_output_folder_id_defaults_to_empty(self, monkeypatch):
-        monkeypatch.delenv("MONTHLY_OUTPUT_FOLDER_ID", raising=False)
-        assert load().monthly_output_folder_id == ""
-
-    def test_monthly_output_folder_id_from_env(self, monkeypatch):
-        monkeypatch.setenv("MONTHLY_OUTPUT_FOLDER_ID", "folder_monthly_123")
-        assert load().monthly_output_folder_id == "folder_monthly_123"
-
     def test_local_dashboard_dir_defaults_to_empty(self, monkeypatch):
         monkeypatch.delenv("LOCAL_DASHBOARD_DIR", raising=False)
         assert load().local_dashboard_dir == ""

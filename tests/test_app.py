@@ -234,41 +234,6 @@ def test_weekly_ok_with_mocked_pipeline(monkeypatch):
     assert data["status"] == "skipped"
 
 
-# ── /monthly ───────────────────────────────────────────────────────── #
-
-def test_monthly_returns_200(client):
-    resp = client.post("/monthly")
-    assert resp.status_code == 200
-
-
-def test_monthly_skipped_when_no_env_vars(client, monkeypatch):
-    for var in _EMPTY_ENV_VARS:
-        monkeypatch.delenv(var, raising=False)
-    data = client.post("/monthly").json()
-    assert data["status"] == "skipped"
-
-
-def test_monthly_response_has_required_fields(monkeypatch):
-    for k, v in _FULL_ENV.items():
-        monkeypatch.setenv(k, v)
-    patches = _mock_pipeline()
-    with patches[0], patches[1], patches[2], patches[3]:
-        with TestClient(app, raise_server_exceptions=True) as c:
-            data = c.post("/monthly").json()
-    assert {"status", "run_id", "month", "email_count"} <= data.keys()
-
-
-def test_monthly_ok_with_mocked_pipeline(monkeypatch):
-    for k, v in _FULL_ENV.items():
-        monkeypatch.setenv(k, v)
-    patches = _mock_pipeline()
-    with patches[0], patches[1], patches[2], patches[3]:
-        with TestClient(app, raise_server_exceptions=True) as c:
-            data = c.post("/monthly").json()
-    # monthly endpoint is currently disabled (deprecated=True)
-    assert data["status"] == "skipped"
-
-
 # ── /dashboard ─────────────────────────────────────────────────────── #
 
 def test_dashboard_returns_200(client):
@@ -323,3 +288,53 @@ def test_dashboard_scans_daily_notes_for_assignees(monkeypatch, tmp_path):
     assert data["assignee_pages"] == 2
     assert (dash_dir / "박은진.md").exists()
     assert (dash_dir / "해랑.md").exists()
+
+
+# ── /scan-archive ─────────────────────────────────────────────────── #
+
+def test_scan_archive_returns_200(client):
+    resp = client.post("/scan-archive")
+    assert resp.status_code == 200
+
+
+def test_scan_archive_skipped_when_no_env_vars(client, monkeypatch):
+    monkeypatch.delenv("DRIVE_EMAIL_ARCHIVE_FOLDER_ID", raising=False)
+    for var in _EMPTY_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    data = client.post("/scan-archive").json()
+    assert data["status"] == "skipped"
+    assert "note" in data
+
+
+def test_scan_archive_response_has_required_fields(monkeypatch):
+    for k, v in _FULL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("DRIVE_EMAIL_ARCHIVE_FOLDER_ID", "fake-archive-id")
+
+    patches = _mock_pipeline()
+    with patches[0], patches[1], patches[2], patches[3]:
+        with patch("src.app.scan_archive_folders") as mock_scan:
+            from src.archive_scanner import ScanResult
+            mock_scan.return_value = ScanResult(processed=0, skipped=0, errors=0)
+            with TestClient(app, raise_server_exceptions=True) as c:
+                data = c.post("/scan-archive").json()
+
+    assert {"status", "run_id", "processed", "skipped", "errors"} <= data.keys()
+
+
+def test_scan_archive_ok_with_mocked_scan(monkeypatch):
+    for k, v in _FULL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("DRIVE_EMAIL_ARCHIVE_FOLDER_ID", "fake-archive-id")
+
+    patches = _mock_pipeline()
+    with patches[0], patches[1], patches[2], patches[3]:
+        with patch("src.app.scan_archive_folders") as mock_scan:
+            from src.archive_scanner import ScanResult
+            mock_scan.return_value = ScanResult(processed=2, skipped=1, errors=0)
+            with TestClient(app, raise_server_exceptions=True) as c:
+                data = c.post("/scan-archive").json()
+
+    assert data["status"] == "ok"
+    assert data["processed"] == 2
+    assert data["skipped"] == 1

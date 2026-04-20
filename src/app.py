@@ -42,7 +42,7 @@ from src.dashboard_writer import (
 from src.logging_cfg import configure_logging
 from src.md_writer import compose, filename_for, filename_for_subject
 from src.summarizer import analyze_email, summarize
-from src.monthly_writer import compose_monthly, filename_for_month
+from src.archive_scanner import collect_archive_for_daily, scan_archive_folders
 from src.weekly_writer import compose_weekly, filename_for_week
 
 # Configure logging once at import time so the first uvicorn log is formatted.
@@ -545,35 +545,50 @@ def daily(
             },
         )
 
-    # ── Collect overnight messages from all accounts ─────────────────── #
-    messages_with_summaries = _collect_messages(c, creds, gmail_q, run_id, "daily")
+    # ── Collect messages ─────────────────────────────────────────────── #
+    # When DRIVE_EMAIL_ARCHIVE_FOLDER_ID is set, use the shared Drive
+    # archive as data source instead of Gmail.
+    if c.drive_email_archive_folder_id:
+        # Archive mode: scan Drive folders matching the date range.
+        date_range_start = period_start.strftime("%Y-%m-%d")
+        date_range_end = period_end.strftime("%Y-%m-%d")
+        log.info("daily -- using Drive archive",
+                 extra={"run_id": run_id, "date_range": f"{date_range_start}~{date_range_end}"})
+        messages_with_summaries = collect_archive_for_daily(
+            drive_svc, c.drive_email_archive_folder_id,
+            date_range_start, date_range_end,
+            c.gemini_api_key, c.local_output_dir, run_id,
+        )
+    else:
+        # Gmail mode: collect overnight messages from all accounts.
+        messages_with_summaries = _collect_messages(c, creds, gmail_q, run_id, "daily")
+
+        # Create individual email notes so daily wiki-links resolve.
+        local_note_dir = c.local_output_dir
+        if local_note_dir and messages_with_summaries:
+            note_dir = Path(local_note_dir)
+            note_dir.mkdir(parents=True, exist_ok=True)
+            individual_at = datetime.now(tz=timezone.utc).isoformat()
+            for msg, ar in messages_with_summaries:
+                try:
+                    local_name = filename_for_subject(msg.subject)
+                    local_path = note_dir / local_name
+                    if not local_path.exists():
+                        summary = ar.summary
+                        if not summary and msg.body_text and msg.body_text.strip():
+                            from src.summarizer import _fallback_summary
+                            summary = _fallback_summary(msg.body_text)
+                        note_md = compose(msg, [], individual_at, summary, "", ar)
+                        local_path.write_text(note_md, encoding="utf-8")
+                        log.info("individual note created",
+                                 extra={"run_id": run_id, "file": local_name})
+                except Exception as exc:
+                    log.warning("individual note write failed",
+                                extra={"run_id": run_id, "error": str(exc)})
+
     email_count = len(messages_with_summaries)
     log.info("daily -- collection complete",
              extra={"run_id": run_id, "email_count": email_count})
-
-    # ── Create individual email notes so daily wiki-links resolve ───── #
-    local_note_dir = c.local_output_dir
-    if local_note_dir and messages_with_summaries:
-        note_dir = Path(local_note_dir)
-        note_dir.mkdir(parents=True, exist_ok=True)
-        individual_at = datetime.now(tz=timezone.utc).isoformat()
-        for msg, ar in messages_with_summaries:
-            try:
-                local_name = filename_for_subject(msg.subject)
-                local_path = note_dir / local_name
-                if not local_path.exists():
-                    # Ensure summary is never empty when body text exists
-                    summary = ar.summary
-                    if not summary and msg.body_text and msg.body_text.strip():
-                        from src.summarizer import _fallback_summary
-                        summary = _fallback_summary(msg.body_text)
-                    note_md = compose(msg, [], individual_at, summary, "", ar)
-                    local_path.write_text(note_md, encoding="utf-8")
-                    log.info("individual note created",
-                             extra={"run_id": run_id, "file": local_name})
-            except Exception as exc:
-                log.warning("individual note write failed",
-                            extra={"run_id": run_id, "error": str(exc)})
 
     # ── Compose & write Daily Note ───────────────────────────────────── #
     local_daily_dir = c.local_daily_output_dir or c.local_output_dir
@@ -741,114 +756,6 @@ def weekly() -> JSONResponse:
     })
 
 
-# ── Monthly digest ──────────────────────────────────────────────────── #
-
-@app.post("/monthly", summary="Generate monthly email digest report", deprecated=True)
-def monthly() -> JSONResponse:
-    """Collects emails for the current calendar month and writes YYYY-MM.md.
-
-    Intended to be triggered by Cloud Scheduler on the last day of each month,
-    or called manually at any time during the month.
-
-    Response shape (always HTTP 200):
-    {
-      "status":      "ok" | "skipped" | "error",
-      "run_id":      "<8-char id>",
-      "month":       "2026-04",
-      "email_count": <int>,
-      "note":        "..."   // only when status != "ok"
-    }
-    """
-    run_id = uuid.uuid4().hex[:8]
-    c = cfg_module.load()
-
-    log.info("monthly skipped -- endpoint disabled", extra={"run_id": run_id})
-    return JSONResponse(status_code=200, content={
-        "status": "skipped", "run_id": run_id, "month": "",
-        "email_count": 0, "note": "monthly endpoint is disabled",
-    })
-
-    missing = cfg_module.validate_for_sync(c)
-    if missing:
-        return JSONResponse(status_code=200, content={
-            "status": "skipped", "run_id": run_id, "month": "",
-            "email_count": 0, "note": f"set these env vars to enable monthly: {missing}",
-        })
-
-    try:
-        tz = ZoneInfo(c.timezone)
-    except Exception:
-        tz = ZoneInfo("Asia/Seoul")
-
-    now = datetime.now(tz)
-    # First day of current month
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    # Last day of current month
-    if now.month == 12:
-        next_month_start = month_start.replace(year=now.year + 1, month=1)
-    else:
-        next_month_start = month_start.replace(month=now.month + 1)
-    month_end = next_month_start - timedelta(seconds=1)
-
-    month_str = now.strftime("%Y-%m")
-    date_from = month_start.strftime("%Y-%m-%d")
-    date_to = month_end.strftime("%Y-%m-%d")
-    gmail_q = f"after:{int(month_start.timestamp())} before:{int(month_end.timestamp())}"
-
-    try:
-        creds = build_credentials(c)
-        drive_svc = build_drive_service(creds)
-    except Exception as exc:
-        log.error("monthly aborted -- Drive auth failed", extra={"run_id": run_id, "error": str(exc)})
-        return JSONResponse(status_code=200, content={
-            "status": "error", "run_id": run_id, "month": month_str,
-            "email_count": 0, "note": "OAuth credential refresh failed",
-        })
-
-    messages_with_analysis = _collect_messages(c, creds, gmail_q, run_id, "monthly")
-    email_count = len(messages_with_analysis)
-    log.info("monthly -- collection complete", extra={"run_id": run_id, "email_count": email_count})
-
-    md_name = filename_for_month(month_str)
-    md_content = compose_monthly(messages_with_analysis, month_str, date_from, date_to, c.timezone)
-
-    monthly_folder_id = (
-        c.monthly_output_folder_id
-        or c.weekly_output_folder_id
-        or c.daily_output_folder_id
-        or c.drive_output_folder_id
-    )
-    try:
-        upsert_markdown(drive_svc, monthly_folder_id, md_name, md_content)
-        log.info("monthly report upserted to Drive", extra={"run_id": run_id, "md_name": md_name})
-    except Exception as exc:
-        log.error("monthly -- upsert failed", extra={"run_id": run_id, "error": str(exc)})
-        return JSONResponse(status_code=200, content={
-            "status": "error", "run_id": run_id, "month": month_str,
-            "email_count": email_count, "note": "Drive upsert failed",
-        })
-
-    local_monthly_dir = (
-        c.local_monthly_output_dir
-        or c.local_weekly_output_dir
-        or c.local_daily_output_dir
-        or c.local_output_dir
-    )
-    if local_monthly_dir:
-        try:
-            out_dir = Path(local_monthly_dir)
-            out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / md_name).write_text(md_content, encoding="utf-8")
-            log.info("monthly report written locally", extra={"run_id": run_id, "md_name": md_name})
-        except Exception as exc:
-            log.warning("monthly -- local write failed", extra={"run_id": run_id, "error": str(exc)})
-
-    log.info("monthly complete", extra={"run_id": run_id, "month": month_str, "email_count": email_count})
-    return JSONResponse(status_code=200, content={
-        "status": "ok", "run_id": run_id, "month": month_str, "email_count": email_count,
-    })
-
-
 # ── Dashboard ───────────────────────────────────────────────────────── #
 
 @app.post("/dashboard", summary="Generate Dataview-powered Dashboard.md")
@@ -942,3 +849,91 @@ def dashboard() -> JSONResponse:
     return JSONResponse(status_code=200, content={
         "status": "ok", "run_id": run_id, "assignee_pages": assignee_count,
     })
+
+
+# ── Scan Archive ──────────────────────────────────────────────────── #
+
+@app.post("/scan-archive", summary="Scan Drive mail archive and create Obsidian notes")
+def scan_archive() -> JSONResponse:
+    """Reads sub-folders from a shared Drive folder (mail archive), downloads
+    본문.md from each, analyzes with Gemini, and writes Obsidian notes locally.
+
+    Response shape (always HTTP 200):
+    {
+      "status":    "ok" | "skipped" | "partial" | "error",
+      "run_id":    "<8-char id>",
+      "processed": <int>,
+      "skipped":   <int>,
+      "errors":    <int>,
+      "note":      "..."   // only when status != "ok"
+    }
+    """
+    run_id = uuid.uuid4().hex[:8]
+    c = cfg_module.load()
+
+    log.info("scan-archive started", extra={"run_id": run_id})
+
+    # ── Config guard ─────────────────────────────────────────────────── #
+    missing = cfg_module.validate_for_scan_archive(c)
+    if missing:
+        log.warning("scan-archive skipped -- missing required env vars",
+                    extra={"run_id": run_id, "missing": missing})
+        return JSONResponse(status_code=200, content={
+            "status": "skipped",
+            "run_id": run_id,
+            "processed": 0,
+            "skipped": 0,
+            "errors": 0,
+            "note": f"set these env vars to enable scan-archive: {missing}",
+        })
+
+    # ── Build Drive service ──────────────────────────────────────────── #
+    try:
+        creds = build_credentials(c)
+        drive_svc = build_drive_service(creds)
+    except Exception as exc:
+        log.error("scan-archive aborted -- Drive auth failed",
+                  extra={"run_id": run_id, "error": str(exc)})
+        return JSONResponse(status_code=200, content={
+            "status": "error",
+            "run_id": run_id,
+            "processed": 0,
+            "skipped": 0,
+            "errors": 1,
+            "note": "OAuth credential refresh failed",
+        })
+
+    # ── Scan ─────────────────────────────────────────────────────────── #
+    local_dir = c.local_output_dir
+    sr = scan_archive_folders(
+        drive_svc, c.drive_email_archive_folder_id,
+        c.gemini_api_key, local_dir, run_id,
+    )
+
+    # ── Final status ─────────────────────────────────────────────────── #
+    if sr.errors == 0:
+        status = "ok"
+        note = ""
+    elif sr.processed > 0:
+        status = "partial"
+        note = f"{sr.errors} folder(s) failed; {sr.processed} succeeded"
+    else:
+        status = "error"
+        note = f"all {sr.errors} folder(s) failed"
+
+    log.info("scan-archive complete", extra={
+        "run_id": run_id, "processed": sr.processed,
+        "skipped": sr.skipped, "errors": sr.errors,
+    })
+
+    body: dict = {
+        "status": status,
+        "run_id": run_id,
+        "processed": sr.processed,
+        "skipped": sr.skipped,
+        "errors": sr.errors,
+    }
+    if note:
+        body["note"] = note
+
+    return JSONResponse(status_code=200, content=body)

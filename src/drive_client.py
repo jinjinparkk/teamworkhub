@@ -80,6 +80,71 @@ def _escape_query(value: str) -> str:
 
 # ── Public API ─────────────────────────────────────────────────────── #
 
+def list_subfolders(service, parent_id: str) -> list[dict]:
+    """Return immediate sub-folders of *parent_id* (shared drive aware).
+
+    Each dict has keys: id, name, webViewLink.
+    """
+    query = (
+        f"'{_escape_query(parent_id)}' in parents "
+        f"and mimeType='{_FOLDER_MIME}' "
+        f"and trashed=false"
+    )
+    results: list[dict] = []
+    page_token: str | None = None
+    while True:
+        resp = service.files().list(
+            q=query,
+            fields=f"nextPageToken, files({_DRIVE_FIELDS})",
+            spaces="drive",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            pageToken=page_token,
+        ).execute()
+        results.extend(resp.get("files", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return results
+
+
+def list_files_in_folder(service, parent_id: str) -> list[DriveFile]:
+    """Return non-folder files inside *parent_id* (shared drive aware)."""
+    query = (
+        f"'{_escape_query(parent_id)}' in parents "
+        f"and mimeType!='{_FOLDER_MIME}' "
+        f"and trashed=false"
+    )
+    results: list[DriveFile] = []
+    page_token: str | None = None
+    while True:
+        resp = service.files().list(
+            q=query,
+            fields=f"nextPageToken, files({_DRIVE_FIELDS})",
+            spaces="drive",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            pageToken=page_token,
+        ).execute()
+        for raw in resp.get("files", []):
+            results.append(_to_drive_file(raw, created=False))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return results
+
+
+def download_file_content(service, file_id: str) -> str:
+    """Download a file's text content by its ID (shared drive aware)."""
+    content = service.files().get_media(
+        fileId=file_id,
+        supportsAllDrives=True,
+    ).execute()
+    if isinstance(content, bytes):
+        return content.decode("utf-8")
+    return str(content)
+
+
 def find_file_by_name(service, filename: str, parent_id: str) -> DriveFile | None:
     """Return the first Drive file matching *filename* in *parent_id*, or None.
 

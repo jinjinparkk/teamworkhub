@@ -8,6 +8,7 @@ Scopes
 ──────
   gmail.readonly  — list + fetch messages; we never send or delete.
   drive.file      — create/update only files this app created; not full Drive.
+  drive.readonly  — read files in shared drives (e.g. mail archive folders).
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ log = logging.getLogger(__name__)
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive.readonly",
 ]
 
 _TOKEN_URI = "https://oauth2.googleapis.com/token"

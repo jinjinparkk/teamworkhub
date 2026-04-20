@@ -136,8 +136,11 @@ class TestScopes:
     def test_drive_file_scope_present(self):
         assert any("drive.file" in s for s in SCOPES)
 
-    def test_exactly_two_scopes(self):
-        assert len(SCOPES) == 2
+    def test_exactly_three_scopes(self):
+        assert len(SCOPES) == 3
+
+    def test_drive_readonly_scope_present(self):
+        assert any("drive.readonly" in s for s in SCOPES)
 
 
 # ── build_gmail_service() ────────────────────────────────────────────── #

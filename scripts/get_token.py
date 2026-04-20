@@ -41,6 +41,7 @@ except ImportError:
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive.readonly",
 ]
 
 CLIENT_SECRET_FILE = Path(__file__).parent / "client_secret.json"
