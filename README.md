@@ -1,6 +1,6 @@
 # TeamWorkHub
 
-Gmail → Google Drive + Obsidian Markdown 자동 동기화 서비스. GCP Cloud Run 위에서 동작하며 Gemini 2.5 Flash로 이메일을 요약·분석합니다.
+Gmail → Google Drive + Obsidian Markdown 자동 동기화 서비스. GCP Cloud Run 위에서 동작하며 Claude Haiku 4.5로 이메일을 요약·분석합니다.
 
 ```
 Cloud Scheduler  ──POST /sync────▶  Cloud Run
@@ -11,7 +11,7 @@ Cloud Scheduler  ──POST /monthly─▶  Cloud Run
                                   Gmail API (OAuth)
                                   list messages by label
                                          │
-                                  Gemini 2.5 Flash (optional)
+                                  Claude Haiku 4.5 (optional)
                                   요약 · 담당자 · 우선순위 · 카테고리 분석
                                          │
                                   Drive API + Local Obsidian vault
@@ -35,8 +35,8 @@ Cloud Scheduler  ──POST /monthly─▶  Cloud Run
 
 ### Obsidian 연동 기능
 
-- **Gemini 분석**: 요약 불릿 · 담당자 · 우선순위(🔴긴급/🟡보통/🟢낮음) · 카테고리(📊보고/✅승인요청/📢공지/📅미팅/📧일반) 자동 태깅
-- **담당자 추출**: 이름+직함 정규식 우선, Gemini 추론 fallback
+- **Claude 분석**: 요약 불릿 · 담당자 · 우선순위(🔴긴급/🟡보통/🟢낮음) · 카테고리(📊보고/✅승인요청/📢공지/📅미팅/📧일반) 자동 태깅
+- **담당자 추출**: 이름+직함 정규식 우선, Claude 추론 fallback
 - **스레드 감지**: RE:/FW: 정규화 → 같은 주제 메일 간 `[[날짜#섹션]]` 위키링크
 - **체크박스**: `- [ ] 처리 완료` — Obsidian Tasks 플러그인으로 미처리 항목 추적
 - **Dataview 인라인 필드**: `담당자::` `우선순위::` `카테고리::` — 노트 간 집계 쿼리 가능
@@ -110,7 +110,7 @@ curl -X POST http://localhost:8080/dashboard
 |---|---|---|
 | `GMAIL_LABEL_ID` | `INBOX` | 동기화할 Gmail 라벨 ID |
 | `MAX_MESSAGES_PER_RUN` | `50` | 1회 실행당 최대 메시지 수 |
-| `GEMINI_API_KEY` | `""` | Google AI Studio 키 (비어있으면 요약 비활성화) |
+| `ANTHROPIC_API_KEY` | `""` | Anthropic API 키 (비어있으면 요약 비활성화) |
 | `TIMEZONE` | `UTC` | 노트 타임스탬프·다이제스트 기준 시간대 (예: `Asia/Seoul`) |
 | `PORT` | `8080` | HTTP 리슨 포트 (Cloud Run 자동 주입) |
 | `LOG_FORMAT` | `json` | `json` (프로덕션) / `pretty` (로컬 개발) |
@@ -144,20 +144,20 @@ curl -X POST http://localhost:8080/dashboard
 
 ### Secret Manager (프로덕션)
 
-`GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `GEMINI_API_KEY`는 Cloud Run 환경변수에 평문으로 저장하지 마세요.
+`GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `ANTHROPIC_API_KEY`는 Cloud Run 환경변수에 평문으로 저장하지 마세요.
 
 ```bash
 # 시크릿 생성 (최초 1회)
 gcloud secrets create twh-oauth-client-id     --replication-policy=automatic
 gcloud secrets create twh-oauth-client-secret --replication-policy=automatic
 gcloud secrets create twh-oauth-refresh-token --replication-policy=automatic
-gcloud secrets create twh-gemini-api-key      --replication-policy=automatic
+gcloud secrets create twh-anthropic-api-key    --replication-policy=automatic
 
 # 값 업로드
 echo -n "YOUR_CLIENT_ID"     | gcloud secrets versions add twh-oauth-client-id     --data-file=-
 echo -n "YOUR_CLIENT_SECRET" | gcloud secrets versions add twh-oauth-client-secret  --data-file=-
 echo -n "YOUR_REFRESH_TOKEN" | gcloud secrets versions add twh-oauth-refresh-token  --data-file=-
-echo -n "YOUR_GEMINI_KEY"    | gcloud secrets versions add twh-gemini-api-key       --data-file=-
+echo -n "YOUR_ANTHROPIC_KEY" | gcloud secrets versions add twh-anthropic-api-key    --data-file=-
 ```
 
 Cloud Run은 배포 시 `--update-secrets` 옵션으로 시크릿을 환경변수로 주입합니다.
@@ -261,8 +261,8 @@ teamworkhub/
 │   ├── gmail_client.py       # 메시지 목록·조회·첨부 다운로드 — Gmail API
 │   ├── drive_client.py       # 파일 업로드·upsert — Drive API (멱등성)
 │   ├── md_writer.py          # 개별 메시지 Obsidian .md 작성
-│   ├── summarizer.py         # Gemini 2.5 Flash 분석 — AnalysisResult 반환
-│   ├── assignee.py           # 담당자 추출 (정규식 → Gemini fallback)
+│   ├── summarizer.py         # Claude Haiku 4.5 분석 — AnalysisResult 반환
+│   ├── assignee.py           # 담당자 추출 (정규식 → Claude fallback)
 │   ├── daily_writer.py       # 일간 다이제스트 작성 (YYYY-MM-DD.md)
 │   ├── weekly_writer.py      # 주간 리포트 작성 (YYYY-WNN.md)
 │   ├── monthly_writer.py     # 월간 리포트 작성 (YYYY-MM.md)
@@ -302,7 +302,7 @@ pytest tests/ -v
 # 354 passed
 ```
 
-실제 API 호출 없음 — 모든 Google API 클라이언트·Gemini는 mock 처리됩니다.
+실제 API 호출 없음 — 모든 Google API 클라이언트·Claude는 mock 처리됩니다.
 
 ---
 
@@ -391,7 +391,7 @@ gcloud run deploy teamworkhub \
   --update-secrets "GOOGLE_OAUTH_CLIENT_ID=twh-oauth-client-id:latest" \
   --update-secrets "GOOGLE_OAUTH_CLIENT_SECRET=twh-oauth-client-secret:latest" \
   --update-secrets "GOOGLE_OAUTH_REFRESH_TOKEN=twh-oauth-refresh-token:latest" \
-  --update-secrets "GEMINI_API_KEY=twh-gemini-api-key:latest"
+  --update-secrets "ANTHROPIC_API_KEY=twh-anthropic-api-key:latest"
 ```
 
 ### 5. Cloud Scheduler 잡 등록

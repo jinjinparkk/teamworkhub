@@ -22,7 +22,7 @@ def _cfg(**overrides) -> Config:
         google_oauth_client_secret="my-secret",
         google_oauth_refresh_token="my-refresh-token",
         local_output_dir="",
-        gemini_api_key="",
+        anthropic_api_key="",
         timezone="UTC",
         log_format="json",
         log_level="INFO",

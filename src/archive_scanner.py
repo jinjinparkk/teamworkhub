@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -120,7 +119,7 @@ def collect_archive_for_daily(
     archive_folder_id: str,
     date_start: str,
     date_end: str,
-    gemini_key: str,
+    api_key: str,
     local_dir: str,
     run_id: str,
 ) -> list[tuple]:
@@ -131,7 +130,7 @@ def collect_archive_for_daily(
         archive_folder_id:  Drive folder ID containing archive subfolders.
         date_start:         Start date inclusive (YYYY-MM-DD).
         date_end:           End date inclusive (YYYY-MM-DD).
-        gemini_key:         Gemini API key.
+        api_key:            Anthropic API key.
         local_dir:          Local Obsidian vault folder for individual notes.
         run_id:             Correlation ID.
 
@@ -194,14 +193,11 @@ def collect_archive_for_daily(
 
         # Analyze
         try:
-            analysis = analyze_email(subject, sender, body_text, gemini_key)
+            analysis = analyze_email(subject, sender, body_text, api_key)
             if not analysis.assignees:
                 analysis.assignees = extract_assignees(subject, sender, body_text, "")
         except Exception:
             analysis = AnalysisResult(summary=_fallback_summary(body_text))
-
-        if gemini_key and analysis.source == "gemini":
-            time.sleep(4)
 
         # Build pseudo message
         full_subject = f"{date_str} {subject}"
@@ -239,7 +235,7 @@ def collect_archive_for_daily(
 def scan_archive_folders(
     drive_svc,
     archive_folder_id: str,
-    gemini_key: str,
+    api_key: str,
     local_dir: str,
     run_id: str,
 ) -> ScanResult:
@@ -248,7 +244,7 @@ def scan_archive_folders(
     Args:
         drive_svc:          Authenticated Drive API service.
         archive_folder_id:  Drive folder ID containing date_sender_subject folders.
-        gemini_key:         Gemini API key (empty = fallback summary).
+        api_key:            Anthropic API key (empty = fallback summary).
         local_dir:          Local Obsidian vault folder to write notes into.
         run_id:             Correlation ID for structured logs.
 
@@ -297,7 +293,7 @@ def scan_archive_folders(
             _process_archive_folder(
                 drive_svc, folder_id, folder_name,
                 date_str, sender, subject,
-                gemini_key, out_dir, local_filename,
+                api_key, out_dir, local_filename,
                 processed_at, run_id,
             )
             result.processed += 1
@@ -317,7 +313,7 @@ def _process_archive_folder(
     date_str: str,
     sender: str,
     subject: str,
-    gemini_key: str,
+    api_key: str,
     out_dir: Path | None,
     local_filename: str,
     processed_at: str,
@@ -355,19 +351,15 @@ def _process_archive_folder(
         log.warning("scan-archive -- attachment scan failed",
                     extra={"run_id": run_id, "folder_name": folder_name, "error": str(exc)})
 
-    # 4. Analyze with Gemini
+    # 4. Analyze with Claude
     try:
-        analysis = analyze_email(subject, sender, body_text, gemini_key)
+        analysis = analyze_email(subject, sender, body_text, api_key)
         if not analysis.assignees:
             analysis.assignees = extract_assignees(subject, sender, body_text, "")
     except Exception as exc:
         log.warning("scan-archive -- analysis failed, using fallback",
                     extra={"run_id": run_id, "folder_name": folder_name, "error": str(exc)})
         analysis = AnalysisResult(summary=_fallback_summary(body_text))
-
-    # Rate limit: sleep after successful Gemini call
-    if gemini_key and analysis.source == "gemini":
-        time.sleep(4)
 
     # 5. Build pseudo ParsedMessage for compose()
     pseudo_msg = SimpleNamespace(

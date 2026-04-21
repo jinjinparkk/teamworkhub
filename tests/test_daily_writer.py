@@ -54,12 +54,15 @@ def _msg(subject="테스트 메일", sender="alice@example.com",
     return m
 
 
-def _ar(summary="", assignees=None, priority="보통", category="일반"):
+def _ar(summary="", assignees=None, priority="보통", category="일반",
+        short_title="", description=""):
     return AnalysisResult(
         summary=summary,
         assignees=assignees or [],
         priority=priority,
         category=category,
+        short_title=short_title,
+        description=description,
     )
 
 
@@ -131,17 +134,9 @@ class TestComposeDailyStructure:
         md = compose_daily([], DATE, START, END, TZ)
         assert "#### 정기적인 일" in md
 
-    def test_schedule_section_present(self):
-        md = compose_daily([], DATE, START, END, TZ)
-        assert "#### Schedule" in md
-
     def test_incomplete_dataview_section_present(self):
         md = compose_daily([], DATE, START, END, TZ)
         assert "### 미완료" in md
-
-    def test_history_section_present(self):
-        md = compose_daily([], DATE, START, END, TZ)
-        assert "### History" in md
 
     def test_dataview_uses_daily_folder(self):
         md = compose_daily([], DATE, START, END, TZ, daily_folder="MyDailyNotes")
@@ -151,29 +146,15 @@ class TestComposeDailyStructure:
         md = compose_daily([], DATE, START, END, TZ)
         assert "TeamWorkHub_Daily" in md
 
-    def test_history_has_three_date_blocks(self):
-        """History section contains Today, prev-day label, 1 Week ago."""
-        md = compose_daily([], DATE, START, END, TZ)  # DATE = 2025-04-02 수요일
-        assert "Today" in md
-        assert "Yesterday" in md  # 수요일 → 전날(화요일)
-        assert "1 Week ago" in md
+    def test_no_schedule_section(self):
+        """Schedule 섹션이 제거되었는지 확인."""
+        md = compose_daily([], DATE, START, END, TZ)
+        assert "Schedule" not in md
 
-    def test_history_monday_shows_friday_label(self):
-        """월요일 daily note에서는 '어제' 대신 '지난 금요일' 표시."""
-        md = compose_daily([], "2025-03-31", START, END, TZ)  # 월요일
-        assert "지난 금요일" in md
-        assert "2025-03-28" in md  # 금요일 날짜
-
-    def test_history_monday_friday_query(self):
-        """월요일 History의 prev_work_day 쿼리가 금요일 파일을 가리킨다."""
-        md = compose_daily([], "2025-03-31", START, END, TZ)  # 월요일
-        assert 'file.name = "2025-03-28"' in md  # 금요일
-
-    def test_history_tuesday_shows_yesterday_label(self):
-        """월요일 외 요일은 'Yesterday' 레이블 그대로."""
-        md = compose_daily([], "2025-04-01", START, END, TZ)  # 화요일
-        assert "Yesterday" in md
-        assert "2025-03-31" in md  # 월요일
+    def test_no_history_section(self):
+        """History 섹션이 제거되었는지 확인."""
+        md = compose_daily([], DATE, START, END, TZ)
+        assert "History" not in md
 
 
 # ── compose_daily — metadata / header ───────────────────────────────── #
@@ -252,6 +233,35 @@ class TestComposeDailyToDoList:
         """Summary blockquotes (> text) are not in daily note."""
         md = compose_daily([(_msg(), _ar(summary="- 핵심 내용"))], DATE, START, END, TZ)
         assert "> - 핵심 내용" not in md
+
+    def test_short_title_used_as_display_text_with_folder(self):
+        """short_title이 있으면 wiki-link 표시 텍스트로 사용 (note_folder 있을 때)."""
+        ar = _ar(short_title="데이터검증 보고")
+        md = compose_daily(
+            [(_msg(subject="FW: (2) [Daily Report] 데이터 검증_2026-04-20"), ar)],
+            DATE, START, END, TZ, note_folder="TeamWorkHub",
+        )
+        assert "데이터검증 보고]]" in md
+        # 파일명(wiki link target)은 그대로 원본 subject 기반
+        assert "TeamWorkHub/FW (2) [Daily Report] 데이터 검증_2026-04-20|데이터검증 보고" in md
+
+    def test_short_title_used_as_display_text_without_folder(self):
+        """short_title이 있으면 wiki-link 표시 텍스트로 사용 (note_folder 없을 때)."""
+        ar = _ar(short_title="데이터검증 보고")
+        md = compose_daily(
+            [(_msg(subject="FW: (2) [Daily Report] 데이터 검증"), ar)],
+            DATE, START, END, TZ,
+        )
+        assert "데이터검증 보고]]" in md
+
+    def test_fallback_to_wiki_name_when_no_short_title(self):
+        """short_title이 비어있으면 기존 wiki_name 그대로 사용."""
+        ar = _ar(short_title="")
+        md = compose_daily(
+            [(_msg(subject="업무 보고"), ar)],
+            DATE, START, END, TZ, note_folder="TeamWorkHub",
+        )
+        assert "TeamWorkHub/업무 보고|업무 보고" in md
 
     def test_returns_string(self):
         assert isinstance(compose_daily([], DATE, START, END, TZ), str)

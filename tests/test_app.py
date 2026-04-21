@@ -167,7 +167,7 @@ def test_daily_ok_with_mocked_pipeline(monkeypatch):
 
 
 def test_daily_monday_uses_friday_period_start(monkeypatch):
-    """On Monday the period_start must be Friday 18:00 (3 days back), not Sunday 18:00."""
+    """On Monday the period_start must be Friday 18:00, period_end Monday 09:00."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
     import src.app as app_mod
@@ -177,12 +177,14 @@ def test_daily_monday_uses_friday_period_start(monkeypatch):
 
     # 2025-04-07 is a Monday
     monday = datetime(2025, 4, 7, 9, 0, 0, tzinfo=ZoneInfo("Asia/Seoul"))
-    captured: list[str] = []
+    captured_start: list[str] = []
+    captured_end: list[str] = []
 
     original_compose = app_mod.compose_daily
 
     def _spy_compose(messages, date_str, period_start, period_end, *args, **kwargs):
-        captured.append(period_start)
+        captured_start.append(period_start)
+        captured_end.append(period_end)
         return original_compose(messages, date_str, period_start, period_end, *args, **kwargs)
 
     patches = _mock_pipeline()
@@ -194,9 +196,11 @@ def test_daily_monday_uses_friday_period_start(monkeypatch):
                 with TestClient(app, raise_server_exceptions=True) as c:
                     c.post("/daily")
 
-    assert len(captured) == 1
-    # period_start should be "2025-04-04 00:00" (Friday), not "2025-04-06 00:00" (Sunday)
-    assert captured[0].startswith("2025-04-04"), f"Expected Friday start, got: {captured[0]}"
+    assert len(captured_start) == 1
+    # period_start: Friday 18:00
+    assert captured_start[0] == "2025-04-04 18:00", f"Expected Fri 18:00, got: {captured_start[0]}"
+    # period_end: Monday 09:00
+    assert captured_end[0] == "2025-04-07 09:00", f"Expected Mon 09:00, got: {captured_end[0]}"
 
 
 # ── /weekly ────────────────────────────────────────────────────────── #

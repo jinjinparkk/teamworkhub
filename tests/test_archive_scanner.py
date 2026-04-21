@@ -1,6 +1,6 @@
 """Unit tests for archive_scanner module.
 
-No real Drive/Gemini API calls — everything is mocked.
+No real Drive/Claude API calls — everything is mocked.
 """
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ class TestScanSuccess:
             from src.summarizer import AnalysisResult
             mock_analyze.return_value = AnalysisResult(
                 summary="- 테스트 요약", assignees=["김치성"],
-                priority="보통", category="승인요청", source="gemini",
+                priority="보통", category="승인요청", source="claude",
             )
 
             result = scan_archive_folders(

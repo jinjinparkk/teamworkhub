@@ -129,7 +129,7 @@ class TestValidateForSync:
             google_oauth_client_secret="csecret",
             google_oauth_refresh_token="rtoken",
             local_output_dir="",
-            gemini_api_key="",
+            anthropic_api_key="",
             timezone="UTC",
             log_format="json",
             log_level="INFO",

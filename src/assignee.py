@@ -2,7 +2,7 @@
 
 Two-step approach:
   1. Regex scan for Korean name+title patterns (e.g. 박은진대리님, 이해랑팀장님)
-  2. Gemini fallback when no names found — infers likely assignees from context
+  2. Claude fallback when no names found — infers likely assignees from context
 
 Returns a deduplicated list of name strings (titles stripped).
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import re
 
-import requests
+import anthropic
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +28,9 @@ _NICKNAME_MAP: dict[str, str] = {
     "찬우": "송찬우",
     "기정": "이기정",
     "은진": "박은진",
+    "동규": "이동규",
+    "혜령": "정혜령",
+    "효수": "이효수",
 }
 
 # 이메일 주소 prefix → 풀네임 매핑 (To/CC에서 담당자 추출)
@@ -52,11 +55,29 @@ _INFER_PROMPT = """\
 {body}"""
 
 _BODY_CHAR_LIMIT = 2_000
-_MODEL = "gemini-2.5-flash"
-_API_URL = (
-    "https://generativelanguage.googleapis.com"
-    "/v1beta/models/{model}:generateContent?key={key}"
-)
+_MODEL = "claude-haiku-4-5-20251001"
+
+# 유효한 한국어 이름: 완성형 음절(가-힣) 2~3자
+_VALID_NAME_RE = re.compile(r"^[가-힣]{2,3}$")
+
+# 알려진 이름 집합 (닉네임 매핑 + 이메일 매핑 값)
+_KNOWN_NAMES: set[str] = set(_NICKNAME_MAP.values()) | set(_EMAIL_MAP.values())
+
+
+def is_valid_assignee(name: str) -> bool:
+    """Check if *name* looks like a real Korean person name.
+
+    Accepts:
+    - Known team members (from nickname/email maps)
+    - 2~3 syllable Korean names (가-힣)
+
+    Rejects garbage like 'ㅋㅋㅋ', '데이트는', '#태그', empty strings, etc.
+    """
+    if not name:
+        return False
+    if name in _KNOWN_NAMES:
+        return True
+    return bool(_VALID_NAME_RE.match(name))
 
 
 def extract_assignees_from_email(to: str, cc: str) -> list[str]:
@@ -95,7 +116,7 @@ def extract_assignees(
         return names
 
     if api_key:
-        inferred = _gemini_infer(subject, sender, body_text, api_key)
+        inferred = _claude_infer(subject, sender, body_text, api_key)
         if inferred:
             return inferred
 
@@ -126,32 +147,34 @@ def _regex_extract(text: str) -> list[str]:
     return list(seen)
 
 
-def _gemini_infer(
+def _claude_infer(
     subject: str,
     sender: str,
     body_text: str,
     api_key: str,
 ) -> list[str]:
-    """Ask Gemini to infer assignees when regex finds nothing."""
+    """Ask Claude to infer assignees when regex finds nothing."""
     try:
         prompt = _INFER_PROMPT.format(
             subject=subject,
             sender=sender,
             body=body_text[:_BODY_CHAR_LIMIT],
         )
-        url = _API_URL.format(model=_MODEL, key=api_key)
-        resp = requests.post(
-            url,
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=10,
+        client = anthropic.Anthropic(api_key=api_key)
+        message = client.messages.create(
+            model=_MODEL,
+            max_tokens=256,
+            messages=[{"role": "user", "content": prompt}],
         )
-        resp.raise_for_status()
-        raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        raw = message.content[0].text.strip()
         if not raw:
             return []
         names = [normalize_name(n.strip()) for n in raw.split(",") if n.strip()]
-        log.info("assignees inferred by Gemini", extra={"names": names})
-        return names
+        valid = [n for n in names if is_valid_assignee(n)]
+        if len(valid) < len(names):
+            log.warning("invalid assignee names filtered out: %s", [n for n in names if not is_valid_assignee(n)])
+        log.info("assignees inferred by Claude", extra={"names": valid})
+        return valid
     except Exception as exc:
         log.warning("assignee inference failed: %s", repr(exc))
         return []

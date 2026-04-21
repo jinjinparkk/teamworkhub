@@ -16,7 +16,7 @@ Usage
 from __future__ import annotations
 
 import re
-from datetime import date as _date, timedelta
+from datetime import date as _date
 from typing import TYPE_CHECKING
 
 from src.md_writer import filename_for_subject
@@ -114,10 +114,11 @@ def compose_daily(
         for msg, ar in messages:
             subject = msg.subject or "(제목 없음)"
             wiki_name = filename_for_subject(subject).removesuffix(".md")
+            display = ar.short_title or wiki_name
             if note_folder:
-                wiki_link = f"{note_folder}/{wiki_name}|{wiki_name}"
+                wiki_link = f"{note_folder}/{wiki_name}|{display}"
             else:
-                wiki_link = wiki_name
+                wiki_link = f"{wiki_name}|{display}" if ar.short_title else wiki_name
             tags = " ".join(f"#{a}" for a in ar.assignees) if ar.assignees else "#미지정"
             lines.append(f"- [ ] [[{wiki_link}]] {tags}")
     else:
@@ -134,47 +135,12 @@ def compose_daily(
         lines.append("- [ ]")
     lines.append("")
 
-    lines.append("#### Schedule (구글 캘린더 연동)")
-    lines.append("-")
-    lines.append("")
-
     # ── 미완료 (Dataview) ───────────────────────────────────────────── #
     lines.append("### 미완료")
     lines.append("")
     lines.append("```dataview")
     lines.append(f'TASK FROM "{daily_folder}"')
     lines.append('WHERE !completed AND date(file.name) >= date(today) - dur(14d) AND text != ""')
-    lines.append("```")
-    lines.append("")
-
-    # ── History (3 Dataview blocks) ──────────────────────────────────── #
-    # 월요일이면 "어제" = 금요일 (주말엔 daily note 없음)
-    if note_date.weekday() == 0:
-        prev_work_day = note_date - timedelta(days=3)
-        prev_label = f"지난 금요일 ({prev_work_day.isoformat()})"
-    else:
-        prev_work_day = note_date - timedelta(days=1)
-        prev_label = f"Yesterday ({prev_work_day.isoformat()})"
-    week_ago = note_date - timedelta(days=7)
-
-    lines.append("### History")
-    lines.append("")
-    lines.append(f"**Today ({date_str})**")
-    lines.append("```dataview")
-    lines.append(f'TASK FROM "{daily_folder}"')
-    lines.append(f'WHERE file.name = "{date_str}" AND !completed')
-    lines.append("```")
-    lines.append("")
-    lines.append(f"**{prev_label}**")
-    lines.append("```dataview")
-    lines.append(f'TASK FROM "{daily_folder}"')
-    lines.append(f'WHERE file.name = "{prev_work_day.isoformat()}" AND !completed')
-    lines.append("```")
-    lines.append("")
-    lines.append(f"**1 Week ago ({week_ago.isoformat()})**")
-    lines.append("```dataview")
-    lines.append(f'TASK FROM "{daily_folder}"')
-    lines.append(f'WHERE file.name = "{week_ago.isoformat()}" AND !completed')
     lines.append("```")
     lines.append("")
 

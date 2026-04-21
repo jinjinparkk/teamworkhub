@@ -12,7 +12,6 @@ from __future__ import annotations
 import ast
 import logging
 import re
-import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -111,7 +110,7 @@ def _collect_messages(
                 continue
 
             try:
-                analysis = analyze_email(msg.subject, msg.sender, msg.body_text, c.gemini_api_key, msg.to, msg.cc)
+                analysis = analyze_email(msg.subject, msg.sender, msg.body_text, c.anthropic_api_key, msg.to, msg.cc)
                 if not analysis.assignees:
                     analysis.assignees = extract_assignees(
                         msg.subject, msg.sender, msg.body_text, "", msg.to, msg.cc
@@ -126,10 +125,7 @@ def _collect_messages(
             log.info(f"{label} -- message collected",
                      extra={"run_id": run_id, "message_id": msg_id,
                             "analysis_source": analysis.source})
-            # Avoid Gemini free-tier rate limit (15 RPM = 1 call per 4s)
-            # Only sleep when Gemini actually succeeded — skip on fallback.
-            if c.gemini_api_key and analysis.source == "gemini":
-                time.sleep(4)
+            # Claude Haiku has generous rate limits; no sleep needed.
 
     return results
 
@@ -353,9 +349,9 @@ def sync() -> JSONResponse:
                     )
                     # Non-fatal: continue with remaining attachments.
 
-            # Analyze with Gemini (optional — defaults when key not set).
+            # Analyze with Claude (optional — defaults when key not set).
             try:
-                ar = analyze_email(msg.subject, msg.sender, msg.body_text, c.gemini_api_key, msg.to, msg.cc)
+                ar = analyze_email(msg.subject, msg.sender, msg.body_text, c.anthropic_api_key, msg.to, msg.cc)
                 if not ar.assignees:
                     ar.assignees = extract_assignees(
                         msg.subject, msg.sender, msg.body_text, "", msg.to, msg.cc
@@ -503,24 +499,19 @@ def daily(
     now = target
     date_str = now.strftime("%Y-%m-%d")
     # Determine email collection window based on day of week.
-    # Monday:   collect Fri 00:00 ~ Sun 23:59 (cover weekend gap)
-    # Sunday:   collect Fri 00:00 ~ Sat 23:59 (weekend catch-up)
-    # Saturday: collect Fri 00:00 ~ Fri 23:59 (just the previous weekday)
-    # Other:    collect previous day only (00:00 ~ 23:59)
+    # Collection window: previous day 18:00 ~ today 09:00
+    # Monday:    Friday  18:00 ~ Monday 09:00 (covers weekend)
+    # Tue–Fri:   Yesterday 18:00 ~ Today 09:00
+    # Sat/Sun:   Friday 18:00 ~ Today 09:00 (fallback, normally not scheduled)
     if now.weekday() == 0:  # Monday
         range_start_day = now - timedelta(days=3)  # Friday
-        range_end_day = now - timedelta(days=1)    # Sunday
-    elif now.weekday() == 6:  # Sunday
-        range_start_day = now - timedelta(days=2)  # Friday
-        range_end_day = now - timedelta(days=1)    # Saturday
-    elif now.weekday() == 5:  # Saturday
-        range_start_day = now - timedelta(days=1)  # Friday
-        range_end_day = range_start_day
-    else:
+    elif now.weekday() in (5, 6):  # Saturday/Sunday
+        days_since_fri = now.weekday() - 4
+        range_start_day = now - timedelta(days=days_since_fri)
+    else:  # Tue–Fri
         range_start_day = now - timedelta(days=1)
-        range_end_day = range_start_day
-    period_start = range_start_day.replace(hour=0, minute=0, second=0, microsecond=0)
-    period_end = range_end_day.replace(hour=23, minute=59, second=59, microsecond=0)
+    period_start = range_start_day.replace(hour=18, minute=0, second=0, microsecond=0)
+    period_end = now.replace(hour=9, minute=0, second=0, microsecond=0)
     period_label_start = period_start.strftime("%Y-%m-%d %H:%M")
     period_label_end = period_end.strftime("%Y-%m-%d %H:%M")
 
@@ -557,7 +548,7 @@ def daily(
         messages_with_summaries = collect_archive_for_daily(
             drive_svc, c.drive_email_archive_folder_id,
             date_range_start, date_range_end,
-            c.gemini_api_key, c.local_output_dir, run_id,
+            c.anthropic_api_key, c.local_output_dir, run_id,
         )
     else:
         # Gmail mode: collect overnight messages from all accounts.
@@ -856,7 +847,7 @@ def dashboard() -> JSONResponse:
 @app.post("/scan-archive", summary="Scan Drive mail archive and create Obsidian notes")
 def scan_archive() -> JSONResponse:
     """Reads sub-folders from a shared Drive folder (mail archive), downloads
-    본문.md from each, analyzes with Gemini, and writes Obsidian notes locally.
+    본문.md from each, analyzes with Claude, and writes Obsidian notes locally.
 
     Response shape (always HTTP 200):
     {
@@ -907,7 +898,7 @@ def scan_archive() -> JSONResponse:
     local_dir = c.local_output_dir
     sr = scan_archive_folders(
         drive_svc, c.drive_email_archive_folder_id,
-        c.gemini_api_key, local_dir, run_id,
+        c.anthropic_api_key, local_dir, run_id,
     )
 
     # ── Final status ─────────────────────────────────────────────────── #

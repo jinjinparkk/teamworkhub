@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.md_writer import compose, filename_for, filename_for_subject
+from src.md_writer import compose, filename_for, filename_for_subject, _clean_body
 from src.summarizer import AnalysisResult
 
 
@@ -56,12 +56,15 @@ def _df(
     return df
 
 
-def _ar(summary="", assignees=None, priority="보통", category="일반"):
+def _ar(summary="", assignees=None, priority="보통", category="일반",
+        short_title="", description=""):
     return AnalysisResult(
         summary=summary,
         assignees=assignees or [],
         priority=priority,
         category=category,
+        short_title=short_title,
+        description=description,
     )
 
 
@@ -232,6 +235,31 @@ class TestComposeFrontmatter:
         fm = self._fm(md)
         assert "#보고" in fm
 
+    def test_original_title_in_frontmatter(self):
+        md = compose(_msg(subject="FW: Daily Report"), [], PROCESSED_AT)
+        fm = self._fm(md)
+        assert "original_title:" in fm
+        assert "FW: Daily Report" in fm
+
+    def test_original_title_with_special_chars_quoted(self):
+        md = compose(_msg(subject="Re: Hello: World #1"), [], PROCESSED_AT)
+        fm = self._fm(md)
+        assert "original_title:" in fm
+
+    def test_description_from_analysis(self):
+        """analysis.description이 있으면 그것을 사용."""
+        ar = _ar(description="CM360 4월 검증 결과 정상", summary="- 요약 불릿")
+        md = compose(_msg(), [], PROCESSED_AT, analysis=ar)
+        fm = self._fm(md)
+        assert "CM360 4월 검증 결과 정상" in fm
+
+    def test_description_fallback_to_summary(self):
+        """description 없으면 summary 첫 줄 fallback."""
+        ar = _ar(description="", summary="- 핵심 요약 내용")
+        md = compose(_msg(), [], PROCESSED_AT, analysis=ar)
+        fm = self._fm(md)
+        assert "핵심 요약 내용" in fm
+
     def test_result_and_link_keys_present(self):
         md = compose(_msg(), [], PROCESSED_AT)
         fm = self._fm(md)
@@ -344,3 +372,135 @@ class TestComposeBody:
         assert "tags:" in fm
         # No #-tag content in frontmatter
         assert "#" not in fm
+
+
+# ── _clean_body ────────────────────────────────────────────────────── #
+
+class TestCleanBody:
+    def test_empty_string(self):
+        assert _clean_body("") == ""
+
+    def test_none_returns_none(self):
+        assert _clean_body(None) is None
+
+    def test_plain_text_unchanged(self):
+        text = "안녕하세요.\n업무 보고 드립니다."
+        assert _clean_body(text) == text
+
+    def test_cid_image_removed(self):
+        text = "본문 내용\n![스크린샷](cid:cafe_image_0@s-core.co.kr)\n감사합니다"
+        result = _clean_body(text)
+        assert "cid:" not in result
+        assert "본문 내용" in result
+        assert "감사합니다" in result
+
+    def test_cid_image_empty_alt_removed(self):
+        text = "내용\n![](cid:20260420051739_0@epcms1p)\n끝"
+        result = _clean_body(text)
+        assert "cid:" not in result
+        assert "내용" in result
+
+    def test_tracking_pixel_removed(self):
+        text = "본문\n![](http://ext.samsung.net/mail/ext/v1/external/status/update?userid=test)\n끝"
+        result = _clean_body(text)
+        assert "ext.samsung.net" not in result
+        assert "본문" in result
+
+    def test_tracking_pixel_https_removed(self):
+        text = "본문\n![](https://tracker.example.com/pixel.gif)\n끝"
+        result = _clean_body(text)
+        assert "tracker.example.com" not in result
+
+    def test_real_image_with_alt_text_preserved(self):
+        """Images with non-empty alt text and http URLs are kept."""
+        text = "![보고서 차트](https://example.com/chart.png)"
+        result = _clean_body(text)
+        assert "보고서 차트" in result
+        assert "example.com/chart.png" in result
+
+    def test_external_warn_removed(self):
+        text = "본문 내용\n이 메일은 조직 외부에서 발송되었습니다. 링크나 첨부 파일 클릭 시 주의하십시오.\n끝"
+        result = _clean_body(text)
+        assert "조직 외부" not in result
+        assert "본문 내용" in result
+
+    def test_english_disclaimer_removed(self):
+        text = (
+            "본문 내용\n"
+            "The information in this email and any attachments are for the sole use "
+            "of the intended recipient and may contain privileged information."
+        )
+        result = _clean_body(text)
+        assert "The information in this email" not in result
+        assert "본문 내용" in result
+
+    def test_signature_separator_truncates(self):
+        sig = (
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "권예지 | Yeji Kwon\n"
+            "Mobile: +82-10-1234-5678\n"
+        )
+        text = "본문 내용입니다.\n감사합니다.\n" + sig
+        result = _clean_body(text)
+        assert "권예지" not in result
+        assert "본문 내용입니다" in result
+
+    def test_signature_separator_light_horizontal(self):
+        """─ (U+2500) separator also works."""
+        sig = "─────────────────────\n이름 | Name\nEmail: test@test.com\n"
+        text = "업무 보고\n" + sig
+        result = _clean_body(text)
+        assert "이름 | Name" not in result
+        assert "업무 보고" in result
+
+    def test_signature_kept_if_tail_too_long(self):
+        """If content after separator is > 800 chars, don't truncate."""
+        long_content = "중요한 내용입니다. " * 100  # ~1000 chars
+        text = "시작\n━━━━━━━━\n" + long_content
+        result = _clean_body(text)
+        assert "중요한 내용입니다" in result
+
+    def test_multiple_separators_uses_last(self):
+        """Only the last separator is checked for truncation."""
+        text = (
+            "내용1\n━━━━━━━━\n"
+            "전달된 메일 내용 (길다)" + "x" * 600 + "\n"
+            "━━━━━━━━\n"
+            "짧은 서명\n"
+        )
+        result = _clean_body(text)
+        # First separator's content kept (>500 chars), last separator truncated
+        assert "내용1" in result
+        assert "짧은 서명" not in result
+
+    def test_combined_junk_all_removed(self):
+        """Real-world scenario: CID + tracking + disclaimer + signature."""
+        text = (
+            "안녕하세요,\n"
+            "업무 보고 드립니다.\n\n"
+            "감사합니다.\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "![](cid:cafe_image_0@s-core.co.kr)\n"
+            "홍길동 | Gildong Hong\n"
+            "Mobile: +82-10-1234-5678\n"
+            "The information in this email and any attachments "
+            "are for the sole use of the intended recipient.\n"
+            "![](http://ext.samsung.net/mail/ext/v1/track)\n"
+            "이 메일은 조직 외부에서 발송되었습니다.\n"
+        )
+        result = _clean_body(text)
+        assert "업무 보고" in result
+        assert "감사합니다" in result
+        assert "cid:" not in result
+        assert "홍길동" not in result
+        assert "The information" not in result
+        assert "ext.samsung.net" not in result
+        assert "조직 외부" not in result
+
+    def test_compose_uses_clean_body(self):
+        """compose() applies body cleanup."""
+        body = "본문\n![](cid:img@mail)\n![](http://tracker.com/px)\n끝"
+        md = compose(_msg(body_text=body), [], PROCESSED_AT)
+        assert "cid:" not in md
+        assert "tracker.com" not in md
+        assert "본문" in md

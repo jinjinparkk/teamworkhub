@@ -39,8 +39,8 @@ class Config:
     # ── Local Obsidian output (optional) ────────────────────────────── #
     local_output_dir: str        # absolute path to Obsidian vault folder; empty = disabled
 
-    # ── Gemini summarization (optional) ─────────────────────────────── #
-    gemini_api_key: str          # empty string disables summarization gracefully
+    # ── Claude summarization (optional) ──────────────────────────────── #
+    anthropic_api_key: str       # empty string disables summarization gracefully
 
     # ── Misc ─────────────────────────────────────────────────────────── #
     timezone: str                # e.g. "Asia/Seoul"; used for note timestamps
@@ -99,7 +99,7 @@ def load() -> Config:
         google_oauth_client_secret=os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", ""),
         google_oauth_refresh_token=os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN", ""),
         local_output_dir=os.environ.get("LOCAL_OUTPUT_DIR", ""),
-        gemini_api_key=os.environ.get("GEMINI_API_KEY", ""),
+        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         timezone=os.environ.get("TIMEZONE", "UTC"),
         log_format=os.environ.get("LOG_FORMAT", "json"),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),

@@ -85,6 +85,28 @@ _MSG_ID_UNSAFE = re.compile(r'[<>@\s/\\:*?"\'|#%&=+,;]')
 _SUBJECT_UNSAFE = re.compile(r'[\\/:*?"<>|]')
 # YAML special characters that require quoting in scalar values.
 _YAML_SPECIAL = re.compile(r'[:#\[\]{}|>&*!,?\'"]')
+# 3+ consecutive newlines → 1 blank line (keeps paragraph separation)
+_MULTI_NEWLINE = re.compile(r"\n{3,}")
+
+# ── Body cleanup patterns ─────────────────────────────────────────── #
+# CID inline images: ![alt](cid:...) — never render outside email clients
+_CID_IMAGE_RE = re.compile(r'!\[[^\]]*\]\(cid:[^)]+\)\s*')
+# Tracking pixels: ![](http://...) — empty-alt images used for read receipts
+_TRACKING_PIXEL_RE = re.compile(r'!\[\s*\]\(https?://[^)]+\)\s*')
+# Korean external-email warning banner
+_EXTERNAL_WARN_RE = re.compile(
+    r'^이 메일은 조직 외부에서 발송되었습니다[^\n]*\n?',
+    re.MULTILINE,
+)
+# English email disclaimer (matches to end of text)
+_DISCLAIMER_RE = re.compile(
+    r'The information in this email and any\s*attachments.*$',
+    re.IGNORECASE | re.DOTALL,
+)
+# Signature separator: ━ (U+2501) or ─ (U+2500) repeated 5+ times
+_SIG_SEPARATOR_RE = re.compile(r'^[━─]{5,}\s*$', re.MULTILINE)
+# Max chars after last separator to consider it a signature block
+_SIG_MAX_TAIL = 800
 
 
 # ── Helpers ─────────────────────────────────────────────────────────── #
@@ -112,6 +134,35 @@ def _sanitise_subject(subject: str) -> str:
     """Strip filesystem-unsafe characters from an email subject for Obsidian filenames."""
     safe = _SUBJECT_UNSAFE.sub("", subject).strip()
     return safe or "untitled"
+
+
+def _clean_body(text: str) -> str:
+    """Remove non-essential clutter from email body for Obsidian readability.
+
+    Strips CID inline images, tracking pixels, external-email warnings,
+    English disclaimers, and signature blocks (after ━━━ separators).
+    """
+    if not text:
+        return text
+
+    # 1. Remove CID images (never render in Obsidian)
+    text = _CID_IMAGE_RE.sub('', text)
+    # 2. Remove tracking pixels (empty-alt images)
+    text = _TRACKING_PIXEL_RE.sub('', text)
+    # 3. Remove external-email warning banner
+    text = _EXTERNAL_WARN_RE.sub('', text)
+    # 4. Remove English disclaimer block (before separator check — reduces tail length)
+    text = _DISCLAIMER_RE.sub('', text)
+
+    # 5. Truncate at signature separator if tail is short enough
+    seps = list(_SIG_SEPARATOR_RE.finditer(text))
+    if seps:
+        last = seps[-1]
+        tail = text[last.end():].strip()
+        if len(tail) <= _SIG_MAX_TAIL:
+            text = text[:last.start()]
+
+    return text
 
 
 # ── Public API ──────────────────────────────────────────────────────── #
@@ -203,10 +254,14 @@ def compose(
     else:
         lines.append("tags:")
 
-    # description: summary 한 줄 요약
-    if analysis and analysis.summary:
+    # original_title: 순수 원본 메일 제목
+    lines.append(f"original_title: {_yaml_scalar(message.subject)}")
+
+    # description: Claude 생성 한 줄 요약 (100자 이내), 없으면 summary 첫 줄 fallback
+    if analysis and analysis.description:
+        lines.append(f"description: {_yaml_scalar(analysis.description)}")
+    elif analysis and analysis.summary:
         first_line = analysis.summary.strip().splitlines()[0]
-        # "- " prefix 제거
         desc = first_line.lstrip("- ").strip()
         lines.append(f"description: {_yaml_scalar(desc)}")
     else:
@@ -241,7 +296,10 @@ def compose(
     lines.append("### 본문")
     lines.append("")
     if message.body_text:
-        lines.append(message.body_text.rstrip())
+        cleaned = message.body_text.replace("\r\n", "\n").replace("\r", "\n")
+        cleaned = _clean_body(cleaned)
+        cleaned = _MULTI_NEWLINE.sub("\n\n", cleaned).rstrip()
+        lines.append(cleaned)
     else:
         lines.append("_(본문 없음)_")
     lines.append("")
