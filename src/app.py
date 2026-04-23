@@ -541,7 +541,12 @@ def daily(
     # archive as data source instead of Gmail.
     if c.drive_email_archive_folder_id:
         # Archive mode: scan Drive folders matching the date range.
-        date_range_start = period_start.strftime("%Y-%m-%d")
+        # Archive folders only have date granularity (YYMMDD), no time info.
+        # To approximate the 18:00 cutoff, exclude period_start's date
+        # (which contains daytime emails we don't want) and start from
+        # the next day.  This correctly handles weekends on Monday:
+        #   Friday 18:00 → start=Saturday, end=Monday (covers Sat/Sun/Mon).
+        date_range_start = (period_start + timedelta(days=1)).strftime("%Y-%m-%d")
         date_range_end = period_end.strftime("%Y-%m-%d")
         log.info("daily -- using Drive archive",
                  extra={"run_id": run_id, "date_range": f"{date_range_start}~{date_range_end}"})

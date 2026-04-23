@@ -239,18 +239,18 @@ def compose(
     lines.append("cc:")
     lines.append(f"attachment: {'true' if drive_files else 'false'}")
 
-    # tags: assignees + category from analysis
-    tag_list: list[str] = []
-    if analysis:
-        for name in analysis.assignees:
-            tag_list.append(f'"#{name}"')
-        if analysis.category:
-            tag_list.append(f'"#{analysis.category}"')
+    # tags: AI-selected subsidiary/media keywords (from Claude analysis)
+    # Falls back to keyword matching when AI tags are not available.
+    if analysis and (analysis.media_tags or analysis.subsidiary_tags):
+        ai_tags = analysis.subsidiary_tags + analysis.media_tags
+    else:
+        full_text = (message.subject or "") + " " + (message.body_text or "")
+        ai_tags = _extract_media_subsidiary_tags(full_text)
 
-    if tag_list:
+    if ai_tags:
         lines.append("tags:")
-        for tag in tag_list:
-            lines.append(f"  - {tag}")
+        for t in ai_tags:
+            lines.append(f"  - {t}")
     else:
         lines.append("tags:")
 
@@ -267,12 +267,10 @@ def compose(
     else:
         lines.append("description:")
 
-    # tag: media / subsidiary 키워드 자동 매칭
-    full_text = (message.subject or "") + " " + (message.body_text or "")
-    ms_tags = _extract_media_subsidiary_tags(full_text)
-    if ms_tags:
+    # tag: (kept for backward compat, mirrors tags above)
+    if ai_tags:
         lines.append("tag:")
-        for t in ms_tags:
+        for t in ai_tags:
             lines.append(f"  - {t}")
     else:
         lines.append("tag:")

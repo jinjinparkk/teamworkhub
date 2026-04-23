@@ -223,17 +223,26 @@ class TestComposeFrontmatter:
         md = compose(_msg(), [], PROCESSED_AT)
         assert "tags:" in self._fm(md)
 
-    def test_tags_contain_assignee_from_analysis(self):
+    def test_tags_exclude_assignee_names(self):
+        """tags should only contain subsidiary/media keywords, not assignee names."""
         ar = _ar(assignees=["이기정"])
         md = compose(_msg(), [], PROCESSED_AT, analysis=ar)
         fm = self._fm(md)
-        assert "#이기정" in fm
+        assert "#이기정" not in fm
 
-    def test_tags_contain_category_from_analysis(self):
+    def test_tags_exclude_category(self):
+        """tags should only contain subsidiary/media keywords, not categories."""
         ar = _ar(category="보고")
         md = compose(_msg(), [], PROCESSED_AT, analysis=ar)
         fm = self._fm(md)
-        assert "#보고" in fm
+        assert "#보고" not in fm
+
+    def test_tags_contain_subsidiary_keyword(self):
+        """tags should contain subsidiary keywords found in email text."""
+        ar = _ar()
+        md = compose(_msg(subject="SIEL Report"), [], PROCESSED_AT, analysis=ar)
+        fm = self._fm(md)
+        assert "SIEL" in fm
 
     def test_original_title_in_frontmatter(self):
         md = compose(_msg(subject="FW: Daily Report"), [], PROCESSED_AT)
