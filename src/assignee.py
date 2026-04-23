@@ -42,6 +42,7 @@ _NICKNAME_MAP: dict[str, str] = {
     "유나": "차윤나",
     "윤나": "차윤나",
     "이혜랑": "이해랑",
+    "김기정": "이기정",
 }
 
 # 영문 이름 → 풀네임 매핑 (case-insensitive로 검색)
@@ -75,8 +76,8 @@ _ENGLISH_NAME_MAP: dict[str, str] = {
     "jong pyo": "김종표",
     "gijeong": "이기정",
     "gi jeong": "이기정",
-    "kijeong": "김기정",
-    "ki jeong": "김기정",
+    "kijeong": "이기정",
+    "ki jeong": "이기정",
     "yuna": "차윤나",
     "yun na": "차윤나",
     "chanwoo": "송찬우",
