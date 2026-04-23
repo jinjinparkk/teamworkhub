@@ -43,6 +43,7 @@ _NICKNAME_MAP: dict[str, str] = {
     "윤나": "차윤나",
     "이혜랑": "이해랑",
     "김기정": "이기정",
+    "원영대": "최원영",
 }
 
 # 영문 이름 → 풀네임 매핑 (case-insensitive로 검색)
@@ -98,6 +99,7 @@ _BLACKLIST: set[str] = {
     "데이터", "시스템", "프로젝트", "이슈가", "결과가", "내용이",
     "이메일", "메일이", "파일이", "항목이", "건에서", "경우에",
     "예전에는", "이전에는", "현재는",
+    "데이트는", "데이트", "미팅은", "미팅이",
 }
 
 # 이메일 주소 prefix → 풀네임 매핑 (To/CC에서 담당자 추출)
@@ -209,7 +211,11 @@ def normalize_name(name: str) -> str:
         return _ENGLISH_NAME_MAP[lower]
 
     # 2. 접미사 제거 후 한글 매핑 시도 (프로님, 매니저님 등 이중 접미사 포함)
-    stripped = re.sub(r"(프로님|매니저님|님|씨|프로|매니저)$", "", name)
+    stripped = re.sub(
+        r"(프로님|매니저님|대리님|팀장님|과장님|부장님|차장님|이사님|주임님|선임님|수석님|파트장님"
+        r"|님|씨|프로|매니저|대리|팀장|과장|부장|차장|이사|주임|선임|수석|파트장)$",
+        "", name,
+    )
     if stripped in _NICKNAME_MAP:
         return _NICKNAME_MAP[stripped]
     if name in _NICKNAME_MAP:
