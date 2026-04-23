@@ -273,28 +273,28 @@ class TestComposeDailyRecurringTasks:
     # DATE = "2025-04-02" → 수요일 (weekday 2)
     def test_wednesday_has_수정기(self):
         md = compose_daily([], "2025-04-02", START, END, TZ)  # 수
-        assert "- [ ] 수정기" in md
+        assert "- 수정기" in md
 
     def test_monday_has_rpa(self):
         md = compose_daily([], "2025-03-31", START, END, TZ)  # 월
-        assert "- [ ] RPA" in md
+        assert "- RPA" in md
 
     def test_tuesday_has_로직점검(self):
         md = compose_daily([], "2025-04-01", START, END, TZ)  # 화
-        assert "- [ ] 로직점검" in md
+        assert "- 로직점검" in md
 
     def test_thursday_has_목정기(self):
         md = compose_daily([], "2025-04-03", START, END, TZ)  # 목
-        assert "- [ ] 목정기" in md
+        assert "- 목정기" in md
 
     def test_friday_has_금정기(self):
         md = compose_daily([], "2025-04-04", START, END, TZ)  # 금
-        assert "- [ ] 금정기" in md
+        assert "- 금정기" in md
 
-    def test_saturday_has_empty_checkbox(self):
+    def test_saturday_has_no_recurring(self):
         md = compose_daily([], "2025-04-05", START, END, TZ)  # 토
-        assert "#### 정기적인 일\n- [ ]" in md
+        assert "#### 정기적인 일\n- (없음)" in md
 
-    def test_sunday_has_empty_checkbox(self):
+    def test_sunday_has_no_recurring(self):
         md = compose_daily([], "2025-04-06", START, END, TZ)  # 일
-        assert "#### 정기적인 일\n- [ ]" in md
+        assert "#### 정기적인 일\n- (없음)" in md

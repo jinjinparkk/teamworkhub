@@ -228,8 +228,12 @@ def compose(
 
     Returns a string ready to be written as a .md file.
     """
-    # Extract date part from processed_at (YYYY-MM-DD)
+    # Extract date: prefer email subject date prefix (YYYY-MM-DD ...),
+    # fall back to processed_at.
     date_str = processed_at[:10] if len(processed_at) >= 10 else processed_at
+    _date_prefix = re.match(r"^(\d{4}-\d{2}-\d{2})\s", message.subject or "")
+    if _date_prefix:
+        date_str = _date_prefix.group(1)
 
     # ── YAML frontmatter ──────────────────────────────────────────────── #
     lines: list[str] = ["---"]
@@ -254,8 +258,7 @@ def compose(
     else:
         lines.append("tags:")
 
-    # original_title: 순수 원본 메일 제목
-    lines.append(f"original_title: {_yaml_scalar(message.subject)}")
+
 
     # description: Claude 생성 한 줄 요약 (100자 이내), 없으면 summary 첫 줄 fallback
     if analysis and analysis.description:
@@ -266,14 +269,6 @@ def compose(
         lines.append(f"description: {_yaml_scalar(desc)}")
     else:
         lines.append("description:")
-
-    # tag: (kept for backward compat, mirrors tags above)
-    if ai_tags:
-        lines.append("tag:")
-        for t in ai_tags:
-            lines.append(f"  - {t}")
-    else:
-        lines.append("tag:")
 
     lines.append("result:")
     lines.append("link:")

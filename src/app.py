@@ -498,6 +498,14 @@ def daily(
 
     now = target
     date_str = now.strftime("%Y-%m-%d")
+
+    # ── Weekend guard: 토/일은 Daily Note 생성하지 않음 ──────────────── #
+    if now.weekday() in (5, 6):  # Saturday=5, Sunday=6
+        return JSONResponse(status_code=200, content={
+            "status": "skipped", "run_id": run_id, "date": date_str,
+            "email_count": 0, "note": "weekend — no daily note generated",
+        })
+
     # Determine email collection window based on day of week.
     # Collection window: previous day 18:00 ~ today 09:00
     # Monday:    Friday  18:00 ~ Monday 09:00 (covers weekend)

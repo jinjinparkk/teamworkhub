@@ -244,16 +244,17 @@ class TestComposeFrontmatter:
         fm = self._fm(md)
         assert "SIEL" in fm
 
-    def test_original_title_in_frontmatter(self):
+    def test_no_original_title_in_frontmatter(self):
+        """original_title 필드는 제거됨 — email_title만 존재."""
         md = compose(_msg(subject="FW: Daily Report"), [], PROCESSED_AT)
         fm = self._fm(md)
-        assert "original_title:" in fm
-        assert "FW: Daily Report" in fm
+        assert "original_title:" not in fm
+        assert "email_title:" in fm
 
-    def test_original_title_with_special_chars_quoted(self):
+    def test_email_title_with_special_chars_quoted(self):
         md = compose(_msg(subject="Re: Hello: World #1"), [], PROCESSED_AT)
         fm = self._fm(md)
-        assert "original_title:" in fm
+        assert "email_title:" in fm
 
     def test_description_from_analysis(self):
         """analysis.description이 있으면 그것을 사용."""
