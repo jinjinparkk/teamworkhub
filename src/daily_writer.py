@@ -135,9 +135,9 @@ def compose_daily(
     lines.append("#### 정기적인 일")
     recurring = _RECURRING_TASKS.get(note_date.weekday())
     if recurring:
-        lines.append(f"- [ ] {recurring}")
+        lines.append(f"- {recurring}")
     else:
-        lines.append("- [ ]")
+        lines.append("- (없음)")
     lines.append("")
 
     # ── 미완료 (Dataview) ───────────────────────────────────────────── #
