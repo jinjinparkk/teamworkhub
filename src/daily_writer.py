@@ -111,9 +111,14 @@ def compose_daily(
     lines.append("#### To do list")
 
     if messages:
+        seen_wiki: set[str] = set()
         for msg, ar in messages:
             subject = msg.subject or "(제목 없음)"
             wiki_name = filename_for_subject(subject).removesuffix(".md")
+            # 같은 파일 링크가 이미 나왔으면 스킵 (스레드 중복 방지)
+            if wiki_name in seen_wiki:
+                continue
+            seen_wiki.add(wiki_name)
             display = ar.short_title or wiki_name
             if note_folder:
                 wiki_link = f"{note_folder}/{wiki_name}|{display}"
