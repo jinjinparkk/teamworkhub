@@ -24,8 +24,7 @@ log = logging.getLogger(__name__)
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/drive.file",
-    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive",
 ]
 
 _TOKEN_URI = "https://oauth2.googleapis.com/token"

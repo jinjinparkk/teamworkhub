@@ -519,12 +519,15 @@ def daily(
     else:  # Tue–Fri
         range_start_day = now - timedelta(days=1)
     period_start = range_start_day.replace(hour=18, minute=0, second=0, microsecond=0)
-    period_end = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    period_end = now  # 현재 시각까지 (2시간마다 누적 업데이트)
     period_label_start = period_start.strftime("%Y-%m-%d %H:%M")
     period_label_end = period_end.strftime("%Y-%m-%d %H:%M")
 
     # Gmail query: Unix timestamp range
     gmail_q = f"after:{int(period_start.timestamp())} before:{int(period_end.timestamp())}"
+    log.info("daily -- time window",
+             extra={"run_id": run_id, "period_start": period_label_start,
+                    "period_end": period_label_end, "gmail_q": gmail_q})
 
     # ── Build Drive service ──────────────────────────────────────────── #
     try:
@@ -562,6 +565,7 @@ def daily(
             drive_svc, c.drive_email_archive_folder_id,
             date_range_start, date_range_end,
             c.anthropic_api_key, c.local_output_dir, run_id,
+            drive_output_folder_id=c.drive_output_folder_id,
         )
     else:
         # Gmail mode: collect overnight messages from all accounts.
@@ -597,7 +601,7 @@ def daily(
     # ── Compose & write Daily Note ───────────────────────────────────── #
     local_daily_dir = c.local_daily_output_dir or c.local_output_dir
     daily_folder_name = Path(local_daily_dir).name if local_daily_dir else "TeamWorkHub_Daily"
-    note_folder_name = Path(c.local_output_dir).name if c.local_output_dir else ""
+    note_folder_name = Path(c.local_output_dir).name if c.local_output_dir else "TeamWorkHub"
 
     md_name = filename_for_date(date_str)
     md_content = compose_daily(

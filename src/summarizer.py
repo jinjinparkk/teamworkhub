@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 import anthropic
 
-from src.assignee import normalize_name, extract_assignees_from_email, is_valid_assignee
+from src.assignee import normalize_name, extract_assignees_from_email, extract_names_from_recipients, is_valid_assignee, _regex_extract
 
 log = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ _ANALYZE_PROMPT = """\
   - 나쁜 예: "- CM360 4월 캠페인 성과 보고서 초안이 첨부되어 있으며, 금주 금요일까지 검토 후 피드백 요청드립니다" (존대체)
   - 좋은 예: "- CM360 4월 캠페인 성과 보고서 초안 첨부. 금주 금요일까지 검토 및 피드백 필요"
   - 좋은 예: "- DV360 데이터 GMPD 업데이트 완료. SETK Meta 이슈도 해결됨"
-- assignees: 메일 본문/제목에 언급된 실제 사람 이름만 (직함·호칭 제외). "관련", "예전에는", "데이터", "시스템" 등 일반 단어는 절대 이름이 아님. 한국인 이름은 보통 3글자 (성1+이름2). 영문 이름도 한글로 변환해서 기록 (예: Haerang→이해랑, Eunjin→박은진, Jessie→윤종화, Hannah→정혜령, Bailey→곽부영, Kyungseok→김경석, Chisung→김치성). "차유나"는 "차윤나"로 기록. 없으면 []
+- assignees: 이 메일에서 실제로 조치/확인/대응이 필요한 핵심 담당자 1~2명만 (직함·호칭 제외). 수신자(To) 명단이나 CC 전체를 나열하지 마. 단순 참조·열람 대상자는 제외. 메일이 특정인에게 요청하는 내용이면 그 사람만 기록. 한국인 이름은 보통 3글자 (성1+이름2). 영문 이름도 한글로 변환 (예: Haerang→이해랑, Eunjin→박은진, Jessie→윤종화, Hannah→정혜령, Bailey→곽부영, Kyungseok→김경석, Chisung→김치성). "차유나"는 "차윤나"로 기록. 없으면 []
 - priority: 메일 긴급도 → "긴급" (당일·즉시 처리 필요) | "보통" (수일 내) | "낮음" (여유 있음)
 - category: 메일 성격 → "보고" | "승인요청" | "공지" | "미팅" | "일반"
 - media_tags: 이 메일에서 실제로 삼성전자 광고 미디어 플랫폼/채널로서 언급된 키워드만 골라줘. 아래 허용 목록에서만 선택. 일반 영단어로 쓰인 경우는 반드시 제외.
@@ -226,7 +226,7 @@ _ANALYZE_PROMPT = """\
   주의: "X"는 트위터(X) 광고 플랫폼일 때만. "RED"는 샤오홍슈(小红书) 플랫폼일 때만. "DIRECT"는 Direct 광고 채널일 때만 ("direct data" 같은 일반 용어 제외). "DISPLAY"는 Display 광고 채널일 때만. "INDEPENDENT"는 Independent 미디어 채널일 때만. 없으면 []
 - subsidiary_tags: 이 메일에서 실제로 삼성전자 해외법인(subsidiary) 코드로서 언급된 키워드만 골라줘. 아래 허용 목록에서만 선택. 일반 영단어로 쓰인 경우는 반드시 제외.
   허용 목록: SEGR, SECE, SEAD, SEPR, SECH, SESAR, SELV, SSA, SEEG, SEB, SEJ, SEAS, SEHK, SGE, SIEL, SME, SEDA, BANGLADESH, SEI, SEF, SEUC, SEG, SEH, SET, SEMAG, SETK, SEWA, SAMCOL, SRI_LANKA, SEM, SENA, SELA, TSE, SEA, SEIB, LA, SENZ, SEPAK, SESP, SEEA, SEUK, GLOBAL, SECA, SEBN, SEASA, SEPOL, SEROM, SECZ, SEPCO, SCIC, SAVINA, SEAU, SEIN, SEIL, SEUZ, SEC
-  주���: "SET"은 삼성전자 태국법인일 때만 ("set up", "data set" 제외). "SEC"은 삼성전자 본사일 때만 ("section" 제외). "SEA"는 동남아법인일 때만 ("sea" 바다 제외). "LA"는 라틴아메리카법인일 때만 (도시명 제외). 없으면 []
+  주���: "SET"은 삼성전자 대만법인일 때만 ("set up", "data set" 제외). "SEC"은 삼성전자 본사일 때만 ("section" 제외). "SEA"는 미국법인(Samsung Electronics America)일 때만 ("sea" 바다 제외). "LA"는 라틴아메리카법인일 때만 (도시명 제외). 없으면 []
 - 본문이 이메일 체인(RE: RE:)인 경우, 가장 최근 회신 내용을 중심으로 분석해. 인용된 이전 메시지는 맥락 참고만 해.
 
 제목: {subject}
@@ -282,9 +282,21 @@ def analyze_email(
         assignees = [n for n in raw_assignees if is_valid_assignee(n)]
         if len(assignees) < len(raw_assignees):
             log.warning("invalid assignee names filtered: %s", [n for n in raw_assignees if not is_valid_assignee(n)])
-        # Claude가 담당자를 못 찾으면 To/CC 이메일에서 fallback
-        if not assignees and (to or cc):
-            assignees = extract_assignees_from_email(to, cc)
+        # subject에서 이름 추출 (folder명에 수신자 포함됨)
+        subject_names = [n for n in _regex_extract(subject) if is_valid_assignee(n)]
+        if subject_names:
+            # subject에 수신자가 명시되어 있으면: subject 이름 + Claude 추가 1명만
+            # 그룹 메일링 리스트 전원이 담당자로 잡히는 것 방지
+            claude_only = [n for n in assignees if n not in subject_names]
+            assignees = list(dict.fromkeys(subject_names + claude_only[:1]))
+        elif not assignees:
+            # subject에도 없고 Claude도 못 찾았으면: TO → CC fallback
+            if to:
+                to_names = extract_names_from_recipients(to)
+                if to_names:
+                    assignees = to_names[:3]
+            if not assignees and cc:
+                assignees = extract_names_from_recipients(cc)[:3]
         priority = data.get("priority", "보통") if data.get("priority") in ("긴급", "보통", "낮음") else "보통"
         category = data.get("category", "일반") if data.get("category") in ("보고", "승인요청", "공지", "미팅", "일반") else "일반"
         short_title = str(data.get("short_title", "")).strip()[:30]

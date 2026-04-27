@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 # Matches: Korean name (2-4 chars) + optional space + title + optional 님
 _NAME_RE = re.compile(
-    r"([가-힣]{2,4})\s*(?:대리|팀장|과장|부장|사원|주임|차장|이사|선임|수석)님?"
+    r"([가-힣]{2,4})\s*(?:대리|팀장|과장|부장|사원|주임|차장|이사|선임|수석|파트장|그룹장)님?"
 )
 
 # 키워드 → 풀네임 매핑 (텍스트에 키워드가 포함되면 해당 풀네임으로 매칭)
@@ -44,6 +44,9 @@ _NICKNAME_MAP: dict[str, str] = {
     "이혜랑": "이해랑",
     "김기정": "이기정",
     "원영대": "최원영",
+    "예지": "권예지",
+    "찬희": "염찬희",
+    "혜진": "박혜진",
 }
 
 # 영문 이름 → 풀네임 매핑 (case-insensitive로 검색)
@@ -89,6 +92,9 @@ _ENGLISH_NAME_MAP: dict[str, str] = {
     "ju won": "김주원",
     "buyoung": "곽부영",
     "bailey": "곽부영",
+    "yeji": "권예지",
+    "ye ji": "권예지",
+    "yejikwon": "권예지",
 }
 
 # 일반 단어인데 2~3글자 한글이라 이름으로 오탐되는 블랙리스트
@@ -100,6 +106,10 @@ _BLACKLIST: set[str] = {
     "이메일", "메일이", "파일이", "항목이", "건에서", "경우에",
     "예전에는", "이전에는", "현재는",
     "데이트는", "데이트", "미팅은", "미팅이",
+    # 본문에서 자주 오탐되는 동사/부사/명사
+    "맞는지", "아마도", "아마", "확인해", "부탁해", "대시보",
+    "로직이", "대해서", "같은데", "있는지", "없는지", "하는지",
+    "판단로", "공유해", "전달해", "요청해", "건이라",
 }
 
 # 이메일 주소 prefix → 풀네임 매핑 (To/CC에서 담당자 추출)
@@ -166,6 +176,71 @@ def extract_assignees_from_email(to: str, cc: str) -> list[str]:
     return []
 
 
+def extract_names_from_recipients(recipient_str: str) -> list[str]:
+    """Extract assignee names from a raw recipient string (To or CC header value).
+
+    Handles formats like:
+      - "예지 <yj@company.com>; 이해랑 <hrlee@company.com>"
+      - "yj@company.com; hrlee@company.com"
+      - "예지; 이해랑"
+      - "Park Yeji <yj@company.com>"
+
+    Strategy:
+      1. Try email prefix mapping via _EMAIL_MAP
+      2. Try display name mapping via normalize_name() + is_valid_assignee()
+      3. Try English name mapping via _ENGLISH_NAME_MAP
+    """
+    if not recipient_str or not recipient_str.strip():
+        return []
+
+    names: list[str] = []
+    seen: set[str] = set()
+    # Split by ; or , (common separators in To/CC)
+    parts = re.split(r"[;,]", recipient_str)
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        display_name = ""
+        email_addr = ""
+
+        # Parse "Display Name <email@domain>" format
+        angle_match = re.match(r"(.+?)\s*<([^>]+)>", part)
+        if angle_match:
+            display_name = angle_match.group(1).strip().strip("'\"")
+            email_addr = angle_match.group(2).strip().lower()
+        elif "@" in part:
+            email_addr = part.strip().lower()
+        else:
+            display_name = part.strip()
+
+        # 1. Try email prefix mapping
+        if email_addr:
+            prefix = email_addr.split("@")[0]
+            if prefix in _EMAIL_MAP and _EMAIL_MAP[prefix] not in seen:
+                names.append(_EMAIL_MAP[prefix])
+                seen.add(_EMAIL_MAP[prefix])
+                continue
+
+        # 2. Try display name — Korean name or nickname
+        if display_name:
+            normalized = normalize_name(display_name)
+            if is_valid_assignee(normalized) and normalized not in seen:
+                names.append(normalized)
+                seen.add(normalized)
+                continue
+            # Try English name mapping
+            lower_name = display_name.lower().strip()
+            if lower_name in _ENGLISH_NAME_MAP and _ENGLISH_NAME_MAP[lower_name] not in seen:
+                names.append(_ENGLISH_NAME_MAP[lower_name])
+                seen.add(_ENGLISH_NAME_MAP[lower_name])
+                continue
+
+    return names
+
+
 def extract_assignees(
     subject: str,
     sender: str,
@@ -176,26 +251,47 @@ def extract_assignees(
 ) -> list[str]:
     """Return deduplicated list of assignee names, or [] if none found.
 
-    Step 1: regex scan for Korean name+title patterns in subject + body.
-    Step 2: Gemini inference if regex finds nothing and api_key is set.
-    Step 3: To/CC email address fallback if still nothing found.
+    Priority order:
+      1. TO recipients (highest priority — the person who received the email)
+      2. Subject regex (folder명에 수신자 포함됨)
+      3. Claude inference
+      4. Full body regex (최종 fallback — 오탐 가능성 있으므로 마지막에만)
+      5. CC recipients
+
     Never raises.
     """
-    names = _regex_extract(subject + " " + body_text)
-    if names:
-        log.info("assignees extracted by regex", extra={"names": names})
-        return names
+    # Step 1: TO recipients — highest priority
+    to_names = extract_names_from_recipients(to) if to else []
+    if to_names:
+        # Merge with subject regex (not full body)
+        subject_names = _regex_extract(subject)
+        merged = list(dict.fromkeys(to_names + subject_names))
+        log.info("assignees extracted from TO + subject", extra={"names": merged})
+        return merged
 
+    # Step 2: subject-only regex (folder명에 수신자 이름 포함)
+    subject_names = _regex_extract(subject)
+    if subject_names:
+        log.info("assignees extracted from subject", extra={"names": subject_names})
+        return subject_names
+
+    # Step 3: Claude inference
     if api_key:
         inferred = _claude_infer(subject, sender, body_text, api_key)
         if inferred:
             return inferred
 
-    # 최종 fallback: To/CC 이메일 주소에서 추출
-    email_names = extract_assignees_from_email(to, cc)
-    if email_names:
-        log.info("assignees extracted from To/CC", extra={"names": email_names})
-        return email_names
+    # Step 4: Full body regex (최종 fallback)
+    body_names = _regex_extract(subject + " " + body_text)
+    if body_names:
+        log.info("assignees extracted from body regex", extra={"names": body_names})
+        return body_names
+
+    # Step 5: CC fallback
+    cc_names = extract_names_from_recipients(cc) if cc else []
+    if cc_names:
+        log.info("assignees extracted from CC", extra={"names": cc_names})
+        return cc_names
 
     return []
 
@@ -212,8 +308,8 @@ def normalize_name(name: str) -> str:
 
     # 2. 접미사 제거 후 한글 매핑 시도 (프로님, 매니저님 등 이중 접미사 포함)
     stripped = re.sub(
-        r"(프로님|매니저님|대리님|팀장님|과장님|부장님|차장님|이사님|주임님|선임님|수석님|파트장님"
-        r"|님|씨|프로|매니저|대리|팀장|과장|부장|차장|이사|주임|선임|수석|파트장)$",
+        r"(프로님|매니저님|대리님|팀장님|과장님|부장님|차장님|이사님|주임님|선임님|수석님|파트장님|그룹장님"
+        r"|님|씨|프로|매니저|대리|팀장|과장|부장|차장|이사|주임|선임|수석|파트장|그룹장)$",
         "", name,
     )
     if stripped in _NICKNAME_MAP:
@@ -231,7 +327,9 @@ def _regex_extract(text: str) -> list[str]:
     seen: dict[str, None] = {}
     # 1) 풀네임+직함 패턴 (예: 이해랑팀장님)
     for match in _NAME_RE.finditer(text):
-        seen[normalize_name(match.group(1))] = None
+        name = normalize_name(match.group(1))
+        if is_valid_assignee(name):
+            seen[name] = None
     # 2) 키워드 단순 포함 매칭 (예: 해랑, 자명프로님, 해랑 팀장님 등 전부)
     for keyword, fullname in _NICKNAME_MAP.items():
         if keyword in text:

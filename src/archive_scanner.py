@@ -23,6 +23,7 @@ from src.drive_client import (
     download_file_content,
     list_files_in_folder,
     list_subfolders,
+    upsert_markdown,
     DriveFile,
 )
 from src.md_writer import compose, filename_for_subject
@@ -43,6 +44,34 @@ _YAML_FRONT_RE = re.compile(r"\A---\s*\n.*?\n---\s*\n", re.DOTALL)
 def _strip_yaml_frontmatter(text: str) -> str:
     """Remove YAML frontmatter (``---...---``) from 본문.md content."""
     return _YAML_FRONT_RE.sub("", text, count=1)
+
+
+_RECIPIENT_TO_RE = re.compile(
+    r"\*\*받는\s*사람:\*\*\s*(.+)", re.IGNORECASE
+)
+_RECIPIENT_CC_RE = re.compile(
+    r"\*\*참조:\*\*\s*(.+)", re.IGNORECASE
+)
+
+
+def _parse_recipients_from_header(text: str) -> tuple[str, str]:
+    """Extract 받는 사람 and 참조 from forwarding header before stripping.
+
+    Returns (to_str, cc_str) — raw recipient strings as they appear in the header.
+    """
+    to_str = ""
+    cc_str = ""
+    for line in text.split("\n"):
+        stripped = line.strip()
+        m = _RECIPIENT_TO_RE.match(stripped)
+        if m:
+            to_str = m.group(1).strip()
+            continue
+        m = _RECIPIENT_CC_RE.match(stripped)
+        if m:
+            cc_str = m.group(1).strip()
+            continue
+    return to_str, cc_str
 
 
 def _strip_forward_header(text: str) -> str:
@@ -122,17 +151,19 @@ def collect_archive_for_daily(
     api_key: str,
     local_dir: str,
     run_id: str,
+    drive_output_folder_id: str = "",
 ) -> list[tuple]:
     """Collect archive folders within a date range for Daily Note generation.
 
     Args:
-        drive_svc:          Authenticated Drive API service.
-        archive_folder_id:  Drive folder ID containing archive subfolders.
-        date_start:         Start date inclusive (YYYY-MM-DD).
-        date_end:           End date inclusive (YYYY-MM-DD).
-        api_key:            Anthropic API key.
-        local_dir:          Local Obsidian vault folder for individual notes.
-        run_id:             Correlation ID.
+        drive_svc:              Authenticated Drive API service.
+        archive_folder_id:      Drive folder ID containing archive subfolders.
+        date_start:             Start date inclusive (YYYY-MM-DD).
+        date_end:               End date inclusive (YYYY-MM-DD).
+        api_key:                Anthropic API key.
+        local_dir:              Local Obsidian vault folder for individual notes.
+        run_id:                 Correlation ID.
+        drive_output_folder_id: Drive folder ID to upload individual notes to.
 
     Returns list of (SimpleNamespace, AnalysisResult) tuples compatible with
     compose_daily().
@@ -173,8 +204,11 @@ def collect_archive_for_daily(
                 log.warning("collect-archive -- 본문.md not found",
                             extra={"run_id": run_id, "folder_name": folder_name})
                 continue
-            body_text = download_file_content(drive_svc, body_file.file_id)
-            body_text = _strip_forward_header(_strip_yaml_frontmatter(body_text))
+            raw_body = download_file_content(drive_svc, body_file.file_id)
+            raw_body = _strip_yaml_frontmatter(raw_body)
+            # Extract TO/CC from forwarding header BEFORE stripping it
+            to_str, cc_str = _parse_recipients_from_header(raw_body)
+            body_text = _strip_forward_header(raw_body)
         except Exception as exc:
             log.error("collect-archive -- download failed",
                       extra={"run_id": run_id, "folder_name": folder_name, "error": str(exc)})
@@ -191,11 +225,11 @@ def collect_archive_for_daily(
         except Exception:
             pass
 
-        # Analyze
+        # Analyze — pass TO/CC so assignee extraction uses recipients
         try:
-            analysis = analyze_email(subject, sender, body_text, api_key)
+            analysis = analyze_email(subject, sender, body_text, api_key, to=to_str, cc=cc_str)
             if not analysis.assignees:
-                analysis.assignees = extract_assignees(subject, sender, body_text, "")
+                analysis.assignees = extract_assignees(subject, sender, body_text, api_key, to=to_str, cc=cc_str)
         except Exception:
             analysis = AnalysisResult(summary=_fallback_summary(body_text))
 
@@ -205,25 +239,40 @@ def collect_archive_for_daily(
             subject=full_subject,
             sender=sender,
             body_text=body_text,
-            to="",
-            cc="",
+            to=to_str,
+            cc=cc_str,
             attachments=[],
             _attachment_links=attachment_links,
         )
 
-        # Write individual note
-        if out_dir:
-            local_filename = filename_for_subject(full_subject)
+        # Write individual note (local + Drive)
+        local_filename = filename_for_subject(full_subject)
+        try:
+            md_content = compose(pseudo_msg, attachment_links, processed_at, analysis.summary, "", analysis)
+        except Exception as exc:
+            log.warning("collect-archive -- compose failed",
+                        extra={"run_id": run_id, "error": str(exc)})
+            md_content = ""
+
+        if md_content and out_dir:
             local_path = out_dir / local_filename
             if not local_path.exists():
                 try:
-                    md_content = compose(pseudo_msg, attachment_links, processed_at, analysis.summary, "", analysis)
                     local_path.write_text(md_content, encoding="utf-8")
-                    log.info("collect-archive -- note written",
+                    log.info("collect-archive -- note written locally",
                              extra={"run_id": run_id, "file": local_filename})
                 except Exception as exc:
-                    log.warning("collect-archive -- note write failed",
+                    log.warning("collect-archive -- local write failed",
                                 extra={"run_id": run_id, "error": str(exc)})
+
+        if md_content and drive_output_folder_id:
+            try:
+                upsert_markdown(drive_svc, drive_output_folder_id, local_filename, md_content)
+                log.info("collect-archive -- note uploaded to Drive",
+                         extra={"run_id": run_id, "file": local_filename})
+            except Exception as exc:
+                log.warning("collect-archive -- Drive upload failed",
+                            extra={"run_id": run_id, "file": local_filename, "error": str(exc)})
 
         results.append((pseudo_msg, analysis))
         log.info("collect-archive -- collected",
@@ -333,9 +382,11 @@ def _process_archive_folder(
                      extra={"run_id": run_id, "folder_name": folder_name})
         raise FileNotFoundError(f"본문.md not found in {folder_name}")
 
-    # 2. Download body text and strip YAML frontmatter if present
-    body_text = download_file_content(drive_svc, body_file.file_id)
-    body_text = _strip_forward_header(_strip_yaml_frontmatter(body_text))
+    # 2. Download body text — extract recipients BEFORE stripping header
+    raw_body = download_file_content(drive_svc, body_file.file_id)
+    raw_body = _strip_yaml_frontmatter(raw_body)
+    to_str, cc_str = _parse_recipients_from_header(raw_body)
+    body_text = _strip_forward_header(raw_body)
     log.info("scan-archive -- body downloaded",
              extra={"run_id": run_id, "folder_name": folder_name, "chars": len(body_text)})
 
@@ -351,11 +402,11 @@ def _process_archive_folder(
         log.warning("scan-archive -- attachment scan failed",
                     extra={"run_id": run_id, "folder_name": folder_name, "error": str(exc)})
 
-    # 4. Analyze with Claude
+    # 4. Analyze with Claude — pass TO/CC for assignee extraction
     try:
-        analysis = analyze_email(subject, sender, body_text, api_key)
+        analysis = analyze_email(subject, sender, body_text, api_key, to=to_str, cc=cc_str)
         if not analysis.assignees:
-            analysis.assignees = extract_assignees(subject, sender, body_text, "")
+            analysis.assignees = extract_assignees(subject, sender, body_text, api_key, to=to_str, cc=cc_str)
     except Exception as exc:
         log.warning("scan-archive -- analysis failed, using fallback",
                     extra={"run_id": run_id, "folder_name": folder_name, "error": str(exc)})
@@ -366,8 +417,8 @@ def _process_archive_folder(
         subject=f"{date_str} {subject}",
         sender=sender,
         body_text=body_text,
-        to="",
-        cc="",
+        to=to_str,
+        cc=cc_str,
         attachments=[],
     )
 

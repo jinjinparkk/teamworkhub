@@ -161,6 +161,8 @@ def find_file_by_name(service, filename: str, parent_id: str) -> DriveFile | Non
             q=query,
             fields=f"files({_DRIVE_FIELDS})",
             spaces="drive",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
         ).execute()
     except HttpError:
         raise
@@ -179,7 +181,10 @@ def get_or_create_folder(service, name: str, parent_id: str) -> str:
         f"and '{_escape_query(parent_id)}' in parents "
         f"and trashed=false"
     )
-    resp = service.files().list(q=query, fields="files(id)", spaces="drive").execute()
+    resp = service.files().list(
+        q=query, fields="files(id)", spaces="drive",
+        supportsAllDrives=True, includeItemsFromAllDrives=True,
+    ).execute()
     files = resp.get("files", [])
     if files:
         return files[0]["id"]
@@ -187,6 +192,7 @@ def get_or_create_folder(service, name: str, parent_id: str) -> str:
     folder = service.files().create(
         body={"name": name, "mimeType": _FOLDER_MIME, "parents": [parent_id]},
         fields="id",
+        supportsAllDrives=True,
     ).execute()
     log.info("Drive folder created", extra={"folder_name": name, "folder_id": folder["id"]})
     return folder["id"]
@@ -222,6 +228,7 @@ def upload_attachment(
         body={"name": name, "parents": [parent_id]},
         media_body=media,
         fields=_DRIVE_FIELDS,
+        supportsAllDrives=True,
     ).execute()
 
     result = _to_drive_file(raw, created=True)
@@ -260,6 +267,7 @@ def upsert_markdown(
             body={"name": filename},
             media_body=media,
             fields=_DRIVE_FIELDS,
+            supportsAllDrives=True,
         ).execute()
         result = _to_drive_file(raw, created=False)
         log.info("markdown updated", extra={"md_filename": filename, "file_id": result.file_id})
@@ -268,6 +276,7 @@ def upsert_markdown(
             body={"name": filename, "mimeType": _MD_MIME, "parents": [parent_id]},
             media_body=media,
             fields=_DRIVE_FIELDS,
+            supportsAllDrives=True,
         ).execute()
         result = _to_drive_file(raw, created=True)
         log.info("markdown created", extra={"md_filename": filename, "file_id": result.file_id})
