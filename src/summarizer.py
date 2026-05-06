@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 import anthropic
 
 from src.assignee import normalize_name, extract_assignees_from_email, extract_names_from_recipients, is_valid_assignee, _regex_extract
+from src.md_writer import _SUBSIDIARY_KEYWORDS
 
 log = logging.getLogger(__name__)
 
@@ -222,10 +223,10 @@ _ANALYZE_PROMPT = """\
 - priority: 메일 긴급도 → "긴급" (당일·즉시 처리 필요) | "보통" (수일 내) | "낮음" (여유 있음)
 - category: 메일 성격 → "보고" | "승인요청" | "공지" | "미팅" | "일반"
 - media_tags: 이 메일에서 실제로 삼성전자 광고 미디어 플랫폼/채널로서 언급된 키워드만 골라줘. 아래 허용 목록에서만 선택. 일반 영단어로 쓰인 경우는 반드시 제외.
-  허용 목록: TRUEVIEW, WE CHAT, LINKEDIN, SQ NEWS, 微信搜一搜, LINEADS, INDEPENDENT, DIRECT, CM360, HANGZHOUMAISHOU, DV360, TTD, TENCENT, BING, PAID MEDIA, JINRICHENGZHANG, NOSP, URLTARGET, DISCOVERY +, 小红书, DUODUO VIDEO, YDN, LOCAL OFFLINE PUBLISHER, AFFILIATE, PAID SOCIAL, X, RED, BLUETV, QQ, SHENGQIANKUAIBAO, ZEST BUY, LOCAL PUBLISHER, IQIYI, DISPLAY, MANGO TV, TENGXUN, MEITU, BYTEDANCE, CRITEO, TIKTOK, JULIANG, XHS, REDDIT, PINTEREST, NAVER, SINA, META, SHIHUO, ZHIHU, UC, 360, SNAPCHAT, BAIDU, YAHOO, GOOGLE ADS, XANDR, CTRIP, PAID SEARCH, TEADS, BILIBILI, WEIXIN, KAKAO, SA360
+  허용 목록: TRUEVIEW, WE_CHAT, LINKEDIN, SQ_NEWS, 微信搜一搜, LINEADS, INDEPENDENT, DIRECT, CM360, HANGZHOUMAISHOU, DV360, TTD, TENCENT, BING, PAID_MEDIA, JINRICHENGZHANG, NOSP, URLTARGET, DISCOVERY+, 小红书, DUODUO_VIDEO, YDN, LOCAL_OFFLINE_PUBLISHER, AFFILIATE, PAID_SOCIAL, X, RED, BLUETV, QQ, SHENGQIANKUAIBAO, ZEST_BUY, LOCAL_PUBLISHER, IQIYI, DISPLAY, MANGO_TV, TENGXUN, MEITU, BYTEDANCE, CRITEO, TIKTOK, JULIANG, XHS, REDDIT, PINTEREST, NAVER, SINA, META, SHIHUO, ZHIHU, UC, 360, SNAPCHAT, BAIDU, YAHOO, GOOGLE_ADS, XANDR, CTRIP, PAID_SEARCH, TEADS, BILIBILI, WEIXIN, KAKAO, SA360
   주의: "X"는 트위터(X) 광고 플랫폼일 때만. "RED"는 샤오홍슈(小红书) 플랫폼일 때만. "DIRECT"는 Direct 광고 채널일 때만 ("direct data" 같은 일반 용어 제외). "DISPLAY"는 Display 광고 채널일 때만. "INDEPENDENT"는 Independent 미디어 채널일 때만. 없으면 []
 - subsidiary_tags: 이 메일에서 실제로 삼성전자 해외법인(subsidiary) 코드로서 언급된 키워드만 골라줘. 아래 허용 목록에서만 선택. 일반 영단어로 쓰인 경우는 반드시 제외.
-  허용 목록: SEGR, SECE, SEAD, SEPR, SECH, SESAR, SELV, SSA, SEEG, SEB, SEJ, SEAS, SEHK, SGE, SIEL, SME, SEDA, BANGLADESH, SEI, SEF, SEUC, SEG, SEH, SET, SEMAG, SETK, SEWA, SAMCOL, SRI_LANKA, SEM, SENA, SELA, TSE, SEA, SEIB, LA, SENZ, SEPAK, SESP, SEEA, SEUK, GLOBAL, SECA, SEBN, SEASA, SEPOL, SEROM, SECZ, SEPCO, SCIC, SAVINA, SEAU, SEIN, SEIL, SEUZ, SEC
+  허용 목록: """ + ", ".join(_SUBSIDIARY_KEYWORDS) + """
   주���: "SET"은 삼성전자 대만법인일 때만 ("set up", "data set" 제외). "SEC"은 삼성전자 본사일 때만 ("section" 제외). "SEA"는 미국법인(Samsung Electronics America)일 때만 ("sea" 바다 제외). "LA"는 라틴아메리카법인일 때만 (도시명 제외). 없으면 []
 - 본문이 이메일 체인(RE: RE:)인 경우, 가장 최근 회신 내용을 중심으로 분석해. 인용된 이전 메시지는 맥락 참고만 해.
 
