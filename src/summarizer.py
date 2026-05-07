@@ -35,7 +35,7 @@ class AnalysisResult:
     assignees: list[str] = field(default_factory=list)
     priority: str = "보통"    # "긴급" | "보통" | "낮음"
     category: str = "일반"    # "보고" | "승인요청" | "공지" | "미팅" | "일반"
-    short_title: str = ""     # 20자 이내 핵심 요약 제목
+    short_title: str = ""     # 30자 이내 핵심 요약 제목
     description: str = ""     # 100자 이내 메일 한 줄 요약
     media_tags: list[str] = field(default_factory=list)       # AI-selected media keywords
     subsidiary_tags: list[str] = field(default_factory=list)  # AI-selected subsidiary keywords
@@ -210,12 +210,13 @@ _ANALYZE_PROMPT = """\
 }}
 
 규칙:
-- short_title: 메일 핵심을 15자 이내로 압축. RE:/FW:/회신:/전달: 접두사 제거, 날짜·코드·번호 생략, 핵심 주제어만 남겨라. 단, 미디어/플랫폼/법인 명칭은 반드시 영문 원문 그대로 유지 (DV360, CM360, TTD, META, TIKTOK, SEF 등 절대 한글 번역 금지).
+- short_title: 메일 핵심을 30자 이내로 요약. RE:/FW:/회신:/전달: 접두사 제거, 날짜·코드·번호 생략. 핵심 주제어와 맥락을 포함하되 단어가 잘리지 않게 완성된 문장으로. 미디어/플랫폼/법인 명칭은 반드시 영문 원문 유지 (DV360, CM360, TTD, META, TIKTOK, SEF 등 한글 번역 금지).
   - 나쁜 예: "FW: (2) [Daily Report] 데이터 검증_2026-04-20" (원본 제목 그대로)
   - 나쁜 예: "디브이360 데이터 확인" (미디어명을 한글로 번역)
-  - 나쁜 예: "Affiliate Tracking 권" (단어 잘림)
-  - 좋은 예: "DV360 데이터 확인" (미디어명 영문 유지)
+  - 나쁜 예: "Affiliate Commission Factory 커" (단어 중간에 잘림)
+  - 좋은 예: "Affiliate Commission Factory 커넥터 개발" (완전한 문장)
   - 좋은 예: "CM360 결측치 점검" (미디어명 영문 유지)
+  - 좋은 예: "SEUK META CM360 노출수 0건 이슈" (맥락 포함)
 - description: 메일 전체 내용을 100자 이내 한 문장~두 문장으로 요약. 구체적 수치·일정·요청사항 포함. 반말 간결체로 (존대 금지).
 - summary: 한국어 불릿 3개, 각 불릿은 1~2문장(30자 이상). 앞에 "- " 붙여서. 반말 간결체로 작성 (존대·경어 금지, ~입니다/~됩니다/~합니다/~드립니다 사용 금지). 용건만 딱딱하게.
   - 불릿1: 메일의 핵심 주제와 배경 (무엇에 대한 메일인지)
@@ -306,7 +307,7 @@ def analyze_email(
                 assignees = extract_names_from_recipients(cc)[:3]
         priority = data.get("priority", "보통") if data.get("priority") in ("긴급", "보통", "낮음") else "보통"
         category = data.get("category", "일반") if data.get("category") in ("보고", "승인요청", "공지", "미팅", "일반") else "일반"
-        short_title = str(data.get("short_title", "")).strip()[:30]
+        short_title = str(data.get("short_title", "")).strip()[:50]
         description = str(data.get("description", "")).strip()[:100]
         media_tags = [str(t).strip() for t in data.get("media_tags", []) if str(t).strip()]
         subsidiary_tags = [str(t).strip() for t in data.get("subsidiary_tags", []) if str(t).strip()]
