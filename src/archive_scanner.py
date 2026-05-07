@@ -347,8 +347,10 @@ def _process_single_folder(
     except Exception:
         analysis = AnalysisResult(summary=_fallback_summary(body_text))
 
-    # 4b. If Claude returned no action_items, use existing note's To-do List
-    if not analysis.action_items and local_already_existed and out_dir:
+    # 4b. Preserve existing note's To-do List if it exists.
+    # Claude returns varying task text across runs, which breaks check-state
+    # matching.  Once a note has To-do items, keep them stable.
+    if local_already_existed and out_dir:
         try:
             existing_items = parse_todo_items(
                 (out_dir / local_filename).read_text(encoding="utf-8")
