@@ -1,4 +1,4 @@
-"""TeamWorkHub Obsidian Vault — read-only MCP server for Claude Desktop."""
+"""TeamWorkHub Obsidian Vault — MCP server for Claude Desktop."""
 
 from __future__ import annotations
 
@@ -44,8 +44,8 @@ def _resolve_folder(folder: str) -> Path:
     return VAULT_ROOT / folder
 
 
-def _safe_read(path: str) -> str:
-    """Read a vault-relative *path* after verifying it stays inside VAULT_ROOT."""
+def _resolve_path(path: str) -> Path:
+    """Resolve a vault-relative *path* and validate it stays inside VAULT_ROOT."""
     full = (VAULT_ROOT / path).resolve()
     vault_resolved = VAULT_ROOT.resolve()
     if not str(full).startswith(str(vault_resolved)):
@@ -53,6 +53,12 @@ def _safe_read(path: str) -> str:
     parts = full.relative_to(vault_resolved).parts
     if any(p in BLOCKED_PATTERNS for p in parts):
         raise ValueError("Access to this folder is blocked.")
+    return full
+
+
+def _safe_read(path: str) -> str:
+    """Read a vault-relative *path* after verifying it stays inside VAULT_ROOT."""
+    full = _resolve_path(path)
     if not full.is_file():
         raise FileNotFoundError(f"Note not found: {path}")
     return full.read_text(encoding="utf-8")
@@ -273,6 +279,66 @@ def get_assignee_summary(name: str) -> str:
             parts.extend(daily_hits)
 
     return "\n".join(parts)
+
+
+@mcp.tool()
+def edit_note(path: str, old_text: str, new_text: str) -> str:
+    """Replace a specific text fragment in a note. Read the note first to get exact text.
+
+    Args:
+        path: Vault-relative path, e.g. "TeamWorkHub/2026-05-07 image attatchment test.md".
+        old_text: Exact text to find and replace (must match exactly, including whitespace).
+        new_text: Replacement text.
+    """
+    full = _resolve_path(path)
+    if not full.is_file():
+        raise FileNotFoundError(f"Note not found: {path}")
+    content = full.read_text(encoding="utf-8")
+    if old_text not in content:
+        raise ValueError("old_text not found in the note. Read the note first to get exact text.")
+    count = content.count(old_text)
+    if count > 1:
+        raise ValueError(f"old_text appears {count} times. Provide more context to make it unique.")
+    updated = content.replace(old_text, new_text, 1)
+    full.write_text(updated, encoding="utf-8")
+    return f"Updated `{path}` — replaced 1 occurrence."
+
+
+@mcp.tool()
+def update_frontmatter_field(path: str, field: str, value: str) -> str:
+    """Update a single YAML frontmatter field in a note.
+
+    Args:
+        path: Vault-relative path, e.g. "TeamWorkHub/2026-05-07 some note.md".
+        field: Frontmatter field name, e.g. "result", "link", "description".
+        value: New value for the field.
+    """
+    full = _resolve_path(path)
+    if not full.is_file():
+        raise FileNotFoundError(f"Note not found: {path}")
+    content = full.read_text(encoding="utf-8")
+
+    m = re.match(r"^(---\s*\n)(.*?\n)(---\s*\n)", content, re.DOTALL)
+    if not m:
+        raise ValueError("Note has no YAML frontmatter.")
+
+    fm_lines = m.group(2).splitlines()
+    found = False
+    for i, line in enumerate(fm_lines):
+        if ":" in line and not line.startswith(" ") and not line.startswith("\t"):
+            key = line.partition(":")[0].strip()
+            if key == field:
+                fm_lines[i] = f"{field}: {value}"
+                found = True
+                break
+    if not found:
+        fm_lines.append(f"{field}: {value}")
+
+    new_fm = "\n".join(fm_lines) + "\n"
+    updated = m.group(1) + new_fm + m.group(3) + content[m.end():]
+    full.write_text(updated, encoding="utf-8")
+    action = "updated" if found else "added"
+    return f"Frontmatter field `{field}` {action} in `{path}`."
 
 
 # ---------------------------------------------------------------------------
