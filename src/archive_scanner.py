@@ -19,6 +19,7 @@ from pathlib import Path
 
 from src.assignee import extract_assignees
 from src.drive_client import (
+    download_file_bytes,
     download_file_content,
     list_files_in_folder,
     list_subfolders,
@@ -50,15 +51,20 @@ _IMAGE_EXTS = frozenset({'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg
 
 
 def _build_cid_map(
-    body_text: str, attachments: list[DriveFile],
+    drive_svc,
+    body_text: str,
+    attachments: list[DriveFile],
+    out_dir: Path | None,
 ) -> tuple[dict[str, str], set[str]]:
-    """Build a mapping from CID references in *body_text* to Drive image URLs.
+    """Build a mapping from CID references in *body_text* to local image paths.
+
+    Downloads matched inline images to ``{out_dir}/assets/`` and returns
+    relative paths (``assets/filename.png``) usable in Obsidian markdown.
 
     Returns ``(cid_map, used_file_ids)`` where *cid_map* maps full CID
-    strings to embeddable ``https://drive.google.com/uc?export=view&id=…``
-    URLs, and *used_file_ids* contains the ``file_id`` values of matched
-    attachments (so the caller can remove them from the attachment link list
-    to avoid duplicates).
+    strings to local relative paths, and *used_file_ids* contains the
+    ``file_id`` values of matched attachments (for removal from the
+    attachment link list to avoid duplicates).
     """
     cid_map: dict[str, str] = {}
     used_ids: set[str] = set()
@@ -74,6 +80,8 @@ def _build_cid_map(
     if not image_attachments:
         return cid_map, used_ids
 
+    assets_dir = out_dir / "assets" if out_dir else None
+
     for cid in cids:
         # CID format: "image001.png@01DCDE42.BB892F50" → name part "image001.png"
         cid_name = cid.split("@")[0] if "@" in cid else cid
@@ -84,8 +92,20 @@ def _build_cid_map(
             # Match: attachment name contains CID filename part
             # e.g. "inline_image001.png" contains "image001.png"
             if cid_lower in att_lower:
-                drive_url = f"https://drive.google.com/uc?export=view&id={att.file_id}"
-                cid_map[cid] = drive_url
+                if assets_dir:
+                    try:
+                        assets_dir.mkdir(parents=True, exist_ok=True)
+                        local_path = assets_dir / att.name
+                        if not local_path.exists():
+                            img_bytes = download_file_bytes(drive_svc, att.file_id)
+                            local_path.write_bytes(img_bytes)
+                        cid_map[cid] = f"assets/{att.name}"
+                    except Exception:
+                        log.warning("cid-map -- failed to download %s", att.name)
+                        break
+                else:
+                    # Fallback: Drive URL (won't render in Obsidian but keeps info)
+                    cid_map[cid] = f"https://drive.google.com/uc?export=view&id={att.file_id}"
                 used_ids.add(att.file_id)
                 break
 
@@ -315,7 +335,7 @@ def _process_single_folder(
     # 3b. Build CID map for inline images, remove matched from attachment list
     cid_map: dict[str, str] = {}
     if attachment_links:
-        cid_map, inline_ids = _build_cid_map(body_text, attachment_links)
+        cid_map, inline_ids = _build_cid_map(drive_svc, body_text, attachment_links, out_dir)
         if inline_ids:
             attachment_links = [a for a in attachment_links if a.file_id not in inline_ids]
 

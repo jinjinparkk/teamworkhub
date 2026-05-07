@@ -145,6 +145,21 @@ def download_file_content(service, file_id: str) -> str:
     return str(content)
 
 
+def download_file_bytes(service, file_id: str) -> bytes:
+    """Download a file's raw bytes by its ID (shared drive aware).
+
+    Use this for binary files (images, etc.) instead of
+    :func:`download_file_content`.
+    """
+    content = service.files().get_media(
+        fileId=file_id,
+        supportsAllDrives=True,
+    ).execute()
+    if isinstance(content, bytes):
+        return content
+    return str(content).encode("utf-8")
+
+
 def find_file_by_name(service, filename: str, parent_id: str) -> DriveFile | None:
     """Return the first Drive file matching *filename* in *parent_id*, or None.
 
