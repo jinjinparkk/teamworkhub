@@ -219,13 +219,13 @@ def compose_daily(
 
     lines.append("")
 
-    # ── 업무 상세 (Dataview: individual note tasks for this date) ──── #
-    # NOTE: GROUP BY 사용 시 체크박스 토글이 다른 항목에 적용되는 Dataview 버그 있음
+    # ── 업무 상세 (Tasks plugin: individual note tasks for this date) ── #
+    # Dataview TASK 쿼리는 체크박스 토글 버그가 있어 Tasks 플러그인 사용
     lines.append("#### 업무 상세")
-    lines.append("```dataview")
-    lines.append("  TASK")
-    lines.append('  WHERE contains(file.name, dateformat(this.file.day, "yyyy-MM-dd"))')
-    lines.append("    AND file.name != this.file.name")
+    lines.append("```tasks")
+    lines.append("not done")
+    lines.append(f"filename includes {date_str}")
+    lines.append("path includes TeamWorkHub")
     lines.append("```")
     lines.append("")
 
@@ -444,6 +444,10 @@ def merge_daily(
         if m and "[[" in line:
             lines[i] = f"{m.group(1)}- {m.group(2)}"
 
+    # Extract date from frontmatter for Tasks plugin query
+    _fm_date_match = re.search(r'^date:\s*(\d{4}-\d{2}-\d{2})', existing_content, re.MULTILINE)
+    _note_date = _fm_date_match.group(1) if _fm_date_match else ""
+
     # Ensure "업무 상세" section exists (migrate from Detailed_list or add new)
     has_detail_section = any(
         line.strip() in ("#### 업무 상세", "#### Detailed_list")
@@ -459,11 +463,10 @@ def merge_daily(
         if insert_idx is not None:
             detail_lines = [
                 "#### 업무 상세",
-                "```dataview",
-                "  TASK",
-                '  WHERE contains(file.name, dateformat(this.file.day, "yyyy-MM-dd"))',
-                "    AND file.name != this.file.name",
-                "  GROUP BY file.link",
+                "```tasks",
+                "not done",
+                f"filename includes {_note_date}",
+                "path includes TeamWorkHub",
                 "```",
                 "",
             ]
@@ -475,19 +478,41 @@ def merge_daily(
         if line.strip() == "#### Detailed_list":
             lines[i] = "#### 업무 상세"
 
-    # Migrate old Dataview queries: TeamWorkHub_Daily → note_folder (TeamWorkHub)
+    # Migrate Dataview TASK → Tasks plugin (Dataview has checkbox toggle bugs)
     _dv_folder = note_folder or "TeamWorkHub"
-    for i, line in enumerate(lines):
-        if 'TASK FROM "TeamWorkHub_Daily"' in line:
-            lines[i] = line.replace(
+    i = 0
+    while i < len(lines):
+        # Detect ```dataview block containing TASK query in 업무 상세
+        if lines[i].strip() == "```dataview" and i > 0:
+            # Find the end of this code block
+            block_end = -1
+            has_task = False
+            for j in range(i + 1, len(lines)):
+                if lines[j].strip() == "```":
+                    block_end = j
+                    break
+                if lines[j].strip().startswith("TASK"):
+                    has_task = True
+            if has_task and block_end > i and _note_date:
+                # Replace entire dataview TASK block with Tasks plugin
+                replacement = [
+                    "```tasks",
+                    "not done",
+                    f"filename includes {_note_date}",
+                    "path includes TeamWorkHub",
+                    "```",
+                ]
+                lines[i:block_end + 1] = replacement
+                i += len(replacement)
+                continue
+        # Migrate old Dataview FROM queries
+        if 'TASK FROM "TeamWorkHub_Daily"' in lines[i]:
+            lines[i] = lines[i].replace(
                 'TASK FROM "TeamWorkHub_Daily"', f'TASK FROM "{_dv_folder}"'
             )
-        # Also fix old WHERE clause (date(file.name) → date)
-        if "date(file.name)" in line and "dateformat" not in line:
-            lines[i] = line.replace("date(file.name)", "date")
-
-    # Remove GROUP BY from TASK queries (causes checkbox toggle bug in Dataview)
-    lines = [line for line in lines if line.strip() != "GROUP BY file.link"]
+        if "date(file.name)" in lines[i] and "dateformat" not in lines[i]:
+            lines[i] = lines[i].replace("date(file.name)", "date")
+        i += 1
 
     result = "\n".join(lines)
 
