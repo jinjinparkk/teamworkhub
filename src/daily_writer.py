@@ -225,6 +225,7 @@ def compose_daily(
     lines.append("```tasks")
     lines.append(f"filename includes {date_str}")
     lines.append("path includes TeamWorkHub")
+    lines.append("group by filename")
     lines.append("```")
     lines.append("")
 
@@ -465,6 +466,7 @@ def merge_daily(
                 "```tasks",
                 f"filename includes {_note_date}",
                 "path includes TeamWorkHub",
+                "group by filename",
                 "```",
                 "",
             ]
@@ -497,6 +499,7 @@ def merge_daily(
                     "```tasks",
                     f"filename includes {_note_date}",
                     "path includes TeamWorkHub",
+                    "group by filename",
                     "```",
                 ]
                 lines[i:block_end + 1] = replacement
