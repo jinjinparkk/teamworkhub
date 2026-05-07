@@ -19,36 +19,11 @@ import re
 from datetime import date as _date
 from typing import TYPE_CHECKING
 
-from src.config import KNOWN_ASSIGNEES
 from src.md_writer import filename_for_subject, _extract_sender_name
 
 if TYPE_CHECKING:
     from src.gmail_client import ParsedMessage
     from src.summarizer import AnalysisResult
-
-
-def _normalize_assignee(name: str) -> str | None:
-    """Map a name to a KNOWN_ASSIGNEES entry. Returns None if no match."""
-    if name in KNOWN_ASSIGNEES:
-        return name
-    # Fuzzy: find a known assignee sharing 2+ consecutive characters
-    for member in KNOWN_ASSIGNEES:
-        for i in range(len(name) - 1):
-            if name[i:i+2] in member:
-                return member
-    return None
-
-
-def _clean_assignees(names: list[str]) -> list[str]:
-    """Filter and auto-correct assignee names against TEAM_MEMBERS."""
-    result: list[str] = []
-    seen: set[str] = set()
-    for name in names:
-        corrected = _normalize_assignee(name)
-        if corrected and corrected not in seen:
-            result.append(corrected)
-            seen.add(corrected)
-    return result
 
 # Prefixes to strip when normalising email subjects for thread detection
 _THREAD_PREFIX_RE = re.compile(
@@ -203,20 +178,19 @@ def compose_daily(
                 wiki_link = f"{wiki_name}|{display}" if ar.short_title else wiki_name
             # Use action_items assignees first, fallback to ar.assignees
             if ar.action_items:
-                ai_assignees = list(dict.fromkeys(
+                assignees = list(dict.fromkeys(
                     item.get("assignee", "") for item in ar.action_items
                     if item.get("assignee")
                 ))
-                cleaned = _clean_assignees(ai_assignees) or _clean_assignees(ar.assignees)
             else:
-                cleaned = _clean_assignees(ar.assignees)
-            tag_parts = [f"#{a}" for a in cleaned] if cleaned else ["#미지정"]
+                assignees = list(ar.assignees) if ar.assignees else []
+            tag_parts = [f"#{a.replace(' ', '_')}" for a in assignees] if assignees else ["#미지정"]
             sender_tag = _extract_sender_name(sender).replace(' ', '_')
             if sender_tag:
                 tag_parts.append(f"#{sender_tag}")
             tags = " ".join(tag_parts)
             todo_lines.append(f"- [[{wiki_link}]] {tags}")
-            all_assignees.update(cleaned)
+            all_assignees.update(assignees)
             if ar.priority == "긴급":
                 has_urgent = True
 
@@ -396,17 +370,16 @@ def merge_daily(
 
         # Use action_items assignees first, fallback to ar.assignees
         if ar.action_items:
-            ai_assignees = list(dict.fromkeys(
+            assignees = list(dict.fromkeys(
                 item.get("assignee", "") for item in ar.action_items
                 if item.get("assignee")
             ))
-            cleaned = _clean_assignees(ai_assignees) or _clean_assignees(ar.assignees)
         else:
-            cleaned = _clean_assignees(ar.assignees)
+            assignees = list(ar.assignees) if ar.assignees else []
 
         if wiki_target in existing_links or wiki_name in existing_base_names:
             # Already in the note — still count assignees/urgency for frontmatter
-            all_msg_assignees.update(cleaned)
+            all_msg_assignees.update(assignees)
             if ar.priority == "긴급":
                 any_urgent = True
             continue
@@ -419,7 +392,7 @@ def merge_daily(
             wiki_link = (
                 f"{wiki_name}|{display}" if ar.short_title else wiki_name
             )
-        tag_parts = [f"#{a}" for a in cleaned] if cleaned else ["#미지정"]
+        tag_parts = [f"#{a.replace(' ', '_')}" for a in assignees] if assignees else ["#미지정"]
         sender_tag = _extract_sender_name(sender).replace(' ', '_')
         if sender_tag:
             tag_parts.append(f"#{sender_tag}")
@@ -427,7 +400,7 @@ def merge_daily(
         new_items.append(f"- [[{wiki_link}]] {tags}")
 
         # Only count assignees/urgency for items that actually appear in To-do
-        all_msg_assignees.update(cleaned)
+        all_msg_assignees.update(assignees)
         if ar.priority == "긴급":
             any_urgent = True
 

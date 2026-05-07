@@ -25,7 +25,7 @@ from src.drive_client import (
     upsert_markdown,
     DriveFile,
 )
-from src.md_writer import compose, filename_for_subject, parse_preserved_fields
+from src.md_writer import compose, filename_for_subject, parse_preserved_fields, parse_todo_checks, parse_todo_items
 from src.summarizer import AnalysisResult, analyze_email, _fallback_summary
 
 log = logging.getLogger(__name__)
@@ -187,14 +187,15 @@ def _process_single_folder(
     full_subject = f"{date_str} {subject}"
     local_filename = filename_for_subject(full_subject)
 
-    # 1. Preserved fields from existing local note
+    # 1. Preserved fields + checked todos from existing local note
     preserved_fields: dict[str, str] | None = None
+    checked_todos: set[str] = set()
     local_already_existed = bool(out_dir and (out_dir / local_filename).exists())
     if local_already_existed:
         try:
-            preserved_fields = parse_preserved_fields(
-                (out_dir / local_filename).read_text(encoding="utf-8")
-            )
+            existing_text = (out_dir / local_filename).read_text(encoding="utf-8")
+            preserved_fields = parse_preserved_fields(existing_text)
+            checked_todos = parse_todo_checks(existing_text)
         except Exception:
             pass
 
@@ -238,6 +239,17 @@ def _process_single_folder(
     except Exception:
         analysis = AnalysisResult(summary=_fallback_summary(body_text))
 
+    # 4b. If Claude returned no action_items, use existing note's To-do List
+    if not analysis.action_items and local_already_existed and out_dir:
+        try:
+            existing_items = parse_todo_items(
+                (out_dir / local_filename).read_text(encoding="utf-8")
+            )
+            if existing_items:
+                analysis.action_items = existing_items
+        except Exception:
+            pass
+
     # 5. Build ArchiveMessage
     message = ArchiveMessage(
         subject=full_subject,
@@ -254,14 +266,15 @@ def _process_single_folder(
             message, attachment_links, processed_at,
             analysis.summary, "", analysis,
             preserved_fields=preserved_fields,
+            checked_todos=checked_todos,
         )
     except Exception as exc:
         log.warning("archive -- compose failed",
                     extra={"run_id": run_id, "error": str(exc)})
         md_content = ""
 
-    # 7. Write local (new files only)
-    if write_local and md_content and out_dir and not local_already_existed:
+    # 7. Write local (always update to keep To-do List in sync with daily note)
+    if write_local and md_content and out_dir:
         try:
             (out_dir / local_filename).write_text(md_content, encoding="utf-8")
             log.info("archive -- note written locally",
@@ -270,8 +283,8 @@ def _process_single_folder(
             log.warning("archive -- local write failed",
                         extra={"run_id": run_id, "error": str(exc)})
 
-    # 8. Write Drive (new files only)
-    if write_drive and md_content and drive_output_folder_id and not local_already_existed:
+    # 8. Write Drive (always update to keep in sync)
+    if write_drive and md_content and drive_output_folder_id:
         try:
             upsert_markdown(drive_svc, drive_output_folder_id, local_filename, md_content)
             log.info("archive -- note uploaded to Drive",

@@ -304,6 +304,40 @@ def parse_todo_checks(content: str) -> set[str]:
     return checked
 
 
+_TODO_ITEM_RE = re.compile(r'^-\s*\[[ xX]\]\s+(.+)$')
+
+
+def parse_todo_items(content: str) -> list[dict]:
+    """Extract all To-do List items from an existing note as action_item dicts.
+
+    Returns list of ``{"task": "...", "assignee": "..."}`` matching the
+    ``AnalysisResult.action_items`` format.  Used to sync daily note tags
+    with the individual note's To-do List.
+
+    Tag order in compose(): ``#assignee #sender_name`` — first tag is
+    always the assignee.
+    """
+    items: list[dict] = []
+    in_todo = False
+    for line in content.splitlines():
+        if line.strip() == "### To-do List":
+            in_todo = True
+            continue
+        if in_todo and line.startswith("### "):
+            break
+        if in_todo:
+            m = _TODO_ITEM_RE.match(line)
+            if m:
+                raw = m.group(1)
+                parts = re.split(r'\s+#', raw)
+                task = parts[0].strip().replace(r"\_", "_")
+                # First #tag is assignee (compose always writes assignee first)
+                assignee = parts[1].strip() if len(parts) > 1 else ""
+                if task:
+                    items.append({"task": task, "assignee": assignee})
+    return items
+
+
 def parse_preserved_fields(content: str) -> dict[str, str]:
     """Extract user-editable frontmatter fields from an existing note.
 

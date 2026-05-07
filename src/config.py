@@ -92,7 +92,7 @@ TEAM_MEMBERS: frozenset[str] = frozenset([
 # ── Known assignees — TEAM_MEMBERS + 업무 지시자/외부 담당자 ────────── #
 # To-do 태그와 frontmatter assignees에 허용되는 전체 이름 목록.
 KNOWN_ASSIGNEES: frozenset[str] = TEAM_MEMBERS | frozenset([
-    "윤종화", "이동규", "정혜령", "곽부영", "김경석", "김치성",
+    "윤종화", "이동규", "정혜령", "곽부영", "김경석", "김치성", "문양규",
 ])
 
 
