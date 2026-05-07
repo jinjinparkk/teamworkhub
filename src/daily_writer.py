@@ -220,12 +220,12 @@ def compose_daily(
     lines.append("")
 
     # ── 업무 상세 (Dataview: individual note tasks for this date) ──── #
+    # NOTE: GROUP BY 사용 시 체크박스 토글이 다른 항목에 적용되는 Dataview 버그 있음
     lines.append("#### 업무 상세")
     lines.append("```dataview")
     lines.append("  TASK")
     lines.append('  WHERE contains(file.name, dateformat(this.file.day, "yyyy-MM-dd"))')
     lines.append("    AND file.name != this.file.name")
-    lines.append("  GROUP BY file.link")
     lines.append("```")
     lines.append("")
 
@@ -485,6 +485,9 @@ def merge_daily(
         # Also fix old WHERE clause (date(file.name) → date)
         if "date(file.name)" in line and "dateformat" not in line:
             lines[i] = line.replace("date(file.name)", "date")
+
+    # Remove GROUP BY from TASK queries (causes checkbox toggle bug in Dataview)
+    lines = [line for line in lines if line.strip() != "GROUP BY file.link"]
 
     result = "\n".join(lines)
 
