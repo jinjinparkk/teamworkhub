@@ -223,7 +223,6 @@ def compose_daily(
     # Dataview TASK 쿼리는 체크박스 토글 버그가 있어 Tasks 플러그인 사용
     lines.append("#### 업무 상세")
     lines.append("```tasks")
-    lines.append("not done")
     lines.append(f"filename includes {date_str}")
     lines.append("path includes TeamWorkHub")
     lines.append("```")
@@ -464,7 +463,6 @@ def merge_daily(
             detail_lines = [
                 "#### 업무 상세",
                 "```tasks",
-                "not done",
                 f"filename includes {_note_date}",
                 "path includes TeamWorkHub",
                 "```",
@@ -497,7 +495,6 @@ def merge_daily(
                 # Replace entire dataview TASK block with Tasks plugin
                 replacement = [
                     "```tasks",
-                    "not done",
                     f"filename includes {_note_date}",
                     "path includes TeamWorkHub",
                     "```",
