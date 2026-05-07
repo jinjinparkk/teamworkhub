@@ -110,8 +110,8 @@ _YAML_SPECIAL = re.compile(r'[:#\[\]{}|>&*!,?\'"]')
 _MULTI_NEWLINE = re.compile(r"\n{3,}")
 
 # ── Body cleanup patterns ─────────────────────────────────────────── #
-# CID inline images: ![alt](cid:...) — never render outside email clients
-_CID_IMAGE_RE = re.compile(r'!\[[^\]]*\]\(cid:[^)]+\)\s*')
+# CID inline images: ![alt](cid:...) — replaced with Drive links or removed
+_CID_IMAGE_RE = re.compile(r'!\[([^\]]*)\]\(cid:([^)]+)\)\s*')
 # Tracking pixels: ![](http://...) — empty-alt images used for read receipts
 _TRACKING_PIXEL_RE = re.compile(r'!\[\s*\]\(https?://[^)]+\)\s*')
 # Korean external-email warning banner
@@ -168,7 +168,7 @@ def _replace_cid_images(text: str, cid_map: dict[str, str]) -> str:
         cid = match.group(2)
         link = cid_map.get(cid)
         if link:
-            return f"![{alt}]({link})"
+            return f"![{alt}]({link})\n"
         return ""
 
     return _CID_IMAGE_RE.sub(_replacer, text)
@@ -183,13 +183,14 @@ def _clean_body(text: str, cid_map: dict[str, str] | None = None) -> str:
     if not text:
         return text
 
-    # 1. CID images: replace with Drive links or remove
+    # 1. Remove tracking pixels first (before CID replacement — replaced CID
+    #    images may have empty alt + https:// URL that looks like a pixel).
+    text = _TRACKING_PIXEL_RE.sub('', text)
+    # 2. CID images: replace with Drive links or remove
     if cid_map:
         text = _replace_cid_images(text, cid_map)
     else:
         text = _CID_IMAGE_RE.sub('', text)
-    # 2. Remove tracking pixels (empty-alt images)
-    text = _TRACKING_PIXEL_RE.sub('', text)
     # 3. Remove external-email warning banner
     text = _EXTERNAL_WARN_RE.sub('', text)
     # 4. Remove English disclaimer block (before separator check — reduces tail length)
@@ -445,19 +446,22 @@ def compose(
     if action_items:
         _checked_todos = checked_todos or set()
         sender_name = _extract_sender_name(message.sender).replace(' ', '_')
-        lines.append("### To-do List")
-        lines.append("")
+        # Merge items with the same task text into one line
+        merged: dict[str, list[str]] = {}
         for item in action_items:
             task = item.get("task", "")
             assignee = item.get("assignee", "")
             if not task:
                 continue
+            merged.setdefault(task, [])
+            if assignee and assignee not in merged[task]:
+                merged[task].append(assignee)
+        lines.append("### To-do List")
+        lines.append("")
+        for task, assignees in merged.items():
             check = "x" if task in _checked_todos else " "
-            # Escape underscores in task text to prevent Obsidian italic rendering
             escaped_task = task.replace("_", r"\_")
-            tag_parts = []
-            if assignee:
-                tag_parts.append(f"#{assignee.replace(' ', '_')}")
+            tag_parts = [f"#{a.replace(' ', '_')}" for a in assignees]
             if sender_name:
                 tag_parts.append(f"#{sender_name}")
             tag_str = " ".join(tag_parts)

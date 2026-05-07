@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.assignee import extract_assignees
@@ -36,8 +36,60 @@ _FOLDER_NAME_ISO_RE = re.compile(
 _FOLDER_NAME_SHORT_RE = re.compile(
     r"^(\d{6})_(.+?)_(.+)$"
 )
+# YYMMDDHH format (8 digits) — hour included
+_FOLDER_NAME_HOUR_RE = re.compile(
+    r"^(\d{8})_(.+?)_(.+)$"
+)
 
 _YAML_FRONT_RE = re.compile(r"\A---\s*\n.*?\n---\s*\n", re.DOTALL)
+
+# ── CID inline image helpers ─────────────────────────────────────────── #
+
+_CID_REF_RE = re.compile(r'!\[[^\]]*\]\(cid:([^)]+)\)')
+_IMAGE_EXTS = frozenset({'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'})
+
+
+def _build_cid_map(
+    body_text: str, attachments: list[DriveFile],
+) -> tuple[dict[str, str], set[str]]:
+    """Build a mapping from CID references in *body_text* to Drive image URLs.
+
+    Returns ``(cid_map, used_file_ids)`` where *cid_map* maps full CID
+    strings to embeddable ``https://drive.google.com/uc?export=view&id=…``
+    URLs, and *used_file_ids* contains the ``file_id`` values of matched
+    attachments (so the caller can remove them from the attachment link list
+    to avoid duplicates).
+    """
+    cid_map: dict[str, str] = {}
+    used_ids: set[str] = set()
+
+    cids = _CID_REF_RE.findall(body_text)
+    if not cids:
+        return cid_map, used_ids
+
+    image_attachments = [
+        a for a in attachments
+        if any(a.name.lower().endswith(ext) for ext in _IMAGE_EXTS)
+    ]
+    if not image_attachments:
+        return cid_map, used_ids
+
+    for cid in cids:
+        # CID format: "image001.png@01DCDE42.BB892F50" → name part "image001.png"
+        cid_name = cid.split("@")[0] if "@" in cid else cid
+        cid_lower = cid_name.lower()
+
+        for att in image_attachments:
+            att_lower = att.name.lower()
+            # Match: attachment name contains CID filename part
+            # e.g. "inline_image001.png" contains "image001.png"
+            if cid_lower in att_lower:
+                drive_url = f"https://drive.google.com/uc?export=view&id={att.file_id}"
+                cid_map[cid] = drive_url
+                used_ids.add(att.file_id)
+                break
+
+    return cid_map, used_ids
 
 
 def _strip_yaml_frontmatter(text: str) -> str:
@@ -113,6 +165,18 @@ def _yymmdd_to_iso(short: str) -> str:
     return dt.strftime("%Y-%m-%d")
 
 
+def _yymmddhh_to_iso(short: str) -> str:
+    """Convert ``YYMMDDHH`` → ``YYYY-MM-DD``, shifting to the next day if hour >= 18.
+
+    e.g. '26050716' → '2026-05-07'  (16시 → 당일)
+         '26050718' → '2026-05-08'  (18시 → 다음날)
+    """
+    dt = datetime.strptime(short, "%y%m%d%H")
+    if dt.hour >= 18:
+        dt += timedelta(days=1)
+    return dt.strftime("%Y-%m-%d")
+
+
 @dataclass
 class ScanResult:
     """Summary returned by scan_archive_folders()."""
@@ -137,13 +201,22 @@ class ArchiveMessage:
 def parse_folder_name(name: str) -> tuple[str, str, str] | None:
     """Parse folder name → (date_iso, sender, subject) or None.
 
-    Supports both formats:
+    Supports three formats:
       ``YYYY-MM-DD_발신자_제목``  → ("2026-04-20", "김치성", "결재요청")
+      ``YYMMDDHH_발신자_제목``    → ("2026-04-20", "김치성", "결재요청")  [18시 이상 → 다음날]
       ``YYMMDD_발신자_제목``      → ("2026-04-20", "김치성", "결재요청")
     """
     m = _FOLDER_NAME_ISO_RE.match(name)
     if m:
         return m.group(1), m.group(2), m.group(3)
+    # Check 8-digit (YYMMDDHH) before 6-digit (YYMMDD)
+    m = _FOLDER_NAME_HOUR_RE.match(name)
+    if m:
+        try:
+            date_iso = _yymmddhh_to_iso(m.group(1))
+        except ValueError:
+            return None
+        return date_iso, m.group(2), m.group(3)
     m = _FOLDER_NAME_SHORT_RE.match(name)
     if m:
         try:
@@ -200,8 +273,16 @@ def _process_single_folder(
             pass
 
     # 2. Download 본문.md — raises on failure
+    #    Some archive folders use numbered variants: [1] 본문.md, [2] 본문.md
+    #    Prefer exact "본문.md", then fall back to the highest-numbered variant.
     files = list_files_in_folder(drive_svc, folder_id)
     body_file = next((f for f in files if f.name == "본문.md"), None)
+    if not body_file:
+        body_variants = sorted(
+            [f for f in files if f.name.endswith("본문.md")],
+            key=lambda f: f.name, reverse=True,
+        )
+        body_file = body_variants[0] if body_variants else None
     if not body_file:
         raise FileNotFoundError(f"본문.md not found in {folder_name}")
 
@@ -230,6 +311,13 @@ def _process_single_folder(
                 break
     except Exception:
         pass
+
+    # 3b. Build CID map for inline images, remove matched from attachment list
+    cid_map: dict[str, str] = {}
+    if attachment_links:
+        cid_map, inline_ids = _build_cid_map(body_text, attachment_links)
+        if inline_ids:
+            attachment_links = [a for a in attachment_links if a.file_id not in inline_ids]
 
     # 4. Claude analysis (fallback on failure)
     try:
@@ -266,6 +354,7 @@ def _process_single_folder(
             message, attachment_links, processed_at,
             analysis.summary, "", analysis,
             preserved_fields=preserved_fields,
+            cid_map=cid_map if cid_map else None,
             checked_todos=checked_todos,
         )
     except Exception as exc:
