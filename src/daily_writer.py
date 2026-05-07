@@ -245,6 +245,16 @@ def compose_daily(
 
     lines.append("")
 
+    # ── 업무 상세 (Dataview: individual note tasks for this date) ──── #
+    lines.append("#### 업무 상세")
+    lines.append("```dataview")
+    lines.append("  TASK")
+    lines.append('  WHERE contains(file.name, dateformat(this.file.day, "yyyy-MM-dd"))')
+    lines.append("    AND file.name != this.file.name")
+    lines.append("  GROUP BY file.link")
+    lines.append("```")
+    lines.append("")
+
     # Static sections
     lines.append("#### 정기적인 일")
     recurring = _RECURRING_TASKS.get(note_date.weekday())
@@ -460,6 +470,48 @@ def merge_daily(
         m = _checkbox_re.match(line)
         if m and "[[" in line:
             lines[i] = f"{m.group(1)}- {m.group(2)}"
+
+    # Ensure "업무 상세" section exists (migrate from Detailed_list or add new)
+    has_detail_section = any(
+        line.strip() in ("#### 업무 상세", "#### Detailed_list")
+        for line in lines
+    )
+    if not has_detail_section:
+        # Insert before "#### 정기적인 일"
+        insert_idx = None
+        for i, line in enumerate(lines):
+            if line.strip() == "#### 정기적인 일":
+                insert_idx = i
+                break
+        if insert_idx is not None:
+            detail_lines = [
+                "#### 업무 상세",
+                "```dataview",
+                "  TASK",
+                '  WHERE contains(file.name, dateformat(this.file.day, "yyyy-MM-dd"))',
+                "    AND file.name != this.file.name",
+                "  GROUP BY file.link",
+                "```",
+                "",
+            ]
+            for j, dl in enumerate(detail_lines):
+                lines.insert(insert_idx + j, dl)
+
+    # Rename "Detailed_list" to "업무 상세" if present
+    for i, line in enumerate(lines):
+        if line.strip() == "#### Detailed_list":
+            lines[i] = "#### 업무 상세"
+
+    # Migrate old Dataview queries: TeamWorkHub_Daily → note_folder (TeamWorkHub)
+    _dv_folder = note_folder or "TeamWorkHub"
+    for i, line in enumerate(lines):
+        if 'TASK FROM "TeamWorkHub_Daily"' in line:
+            lines[i] = line.replace(
+                'TASK FROM "TeamWorkHub_Daily"', f'TASK FROM "{_dv_folder}"'
+            )
+        # Also fix old WHERE clause (date(file.name) → date)
+        if "date(file.name)" in line and "dateformat" not in line:
+            lines[i] = line.replace("date(file.name)", "date")
 
     result = "\n".join(lines)
 
