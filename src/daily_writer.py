@@ -238,13 +238,13 @@ def compose_daily(
         lines.append("- (없음)")
     lines.append("")
 
-    # ── 미완료 (Dataview) ───────────────────────────────────────────── #
-    _dv_folder = note_folder or daily_folder
+    # ── 미완료 (Tasks plugin) ─────────────────────────────────────── #
     lines.append("### 미완료")
     lines.append("")
-    lines.append("```dataview")
-    lines.append(f'TASK FROM "{_dv_folder}"')
-    lines.append('WHERE !completed AND date >= date(today) - dur(14d) AND text != ""')
+    lines.append("```tasks")
+    lines.append("not done")
+    lines.append("path includes TeamWorkHub")
+    lines.append("group by filename")
     lines.append("```")
     lines.append("")
 
@@ -482,7 +482,7 @@ def merge_daily(
     _dv_folder = note_folder or "TeamWorkHub"
     i = 0
     while i < len(lines):
-        # Detect ```dataview block containing TASK query in 업무 상세
+        # Detect ```dataview block containing TASK query
         if lines[i].strip() == "```dataview" and i > 0:
             # Find the end of this code block
             block_end = -1
@@ -493,15 +493,31 @@ def merge_daily(
                     break
                 if lines[j].strip().startswith("TASK"):
                     has_task = True
-            if has_task and block_end > i and _note_date:
-                # Replace entire dataview TASK block with Tasks plugin
-                replacement = [
-                    "```tasks",
-                    f"filename includes {_note_date}",
-                    "path includes TeamWorkHub",
-                    "group by filename",
-                    "```",
-                ]
+            if has_task and block_end > i:
+                # Determine if this is the 미완료 section (has !completed or not done filter)
+                is_incomplete_section = any(
+                    "!completed" in lines[k] or "not done" in lines[k]
+                    for k in range(i + 1, block_end)
+                )
+                if is_incomplete_section:
+                    replacement = [
+                        "```tasks",
+                        "not done",
+                        "path includes TeamWorkHub",
+                        "group by filename",
+                        "```",
+                    ]
+                elif _note_date:
+                    replacement = [
+                        "```tasks",
+                        f"filename includes {_note_date}",
+                        "path includes TeamWorkHub",
+                        "group by filename",
+                        "```",
+                    ]
+                else:
+                    i += 1
+                    continue
                 lines[i:block_end + 1] = replacement
                 i += len(replacement)
                 continue
