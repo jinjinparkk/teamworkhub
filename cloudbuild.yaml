@@ -1,0 +1,36 @@
+steps:
+  # Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'asia-northeast3-docker.pkg.dev/$PROJECT_ID/cloud-run-images/teamworkhub:$COMMIT_SHA'
+      - '-t'
+      - 'asia-northeast3-docker.pkg.dev/$PROJECT_ID/cloud-run-images/teamworkhub:latest'
+      - '.'
+
+  # Push Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'asia-northeast3-docker.pkg.dev/$PROJECT_ID/cloud-run-images/teamworkhub'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'teamworkhub'
+      - '--image'
+      - 'asia-northeast3-docker.pkg.dev/$PROJECT_ID/cloud-run-images/teamworkhub:$COMMIT_SHA'
+      - '--region'
+      - 'asia-northeast3'
+
+images:
+  - 'asia-northeast3-docker.pkg.dev/$PROJECT_ID/cloud-run-images/teamworkhub:$COMMIT_SHA'
+  - 'asia-northeast3-docker.pkg.dev/$PROJECT_ID/cloud-run-images/teamworkhub:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
