@@ -247,6 +247,55 @@ def filename_for_subject(subject: str) -> str:
 _RESULT_RE = re.compile(r'^result:[ \t]+(.+)$', re.MULTILINE)
 _LINK_RE = re.compile(r'^link:[ \t]+(.+)$', re.MULTILINE)
 
+# Regex to capture checked todo items: "- [x] task text #assignee #발신자:name"
+_TODO_CHECK_RE = re.compile(r'^-\s*\[[xX]\]\s+(.+)$', re.MULTILINE)
+
+
+def _extract_sender_name(sender: str) -> str:
+    """Extract the display name from a sender string, stripping email address.
+
+    Examples:
+        "김치성 <chisung@example.com>" → "김치성"
+        "chisung@example.com"          → "chisung"
+        "Kim, Chisung"                 → "Kim, Chisung"
+    """
+    if not sender:
+        return ""
+    # "Name <email>" pattern
+    m = re.match(r'^"?([^"<]+)"?\s*<', sender)
+    if m:
+        return m.group(1).strip()
+    # Plain email — return local part
+    if "@" in sender and " " not in sender.strip():
+        return sender.split("@")[0]
+    return sender.strip()
+
+
+def parse_todo_checks(content: str) -> set[str]:
+    """Extract checked todo task texts from an existing note's To-do List section.
+
+    Returns a set of task description strings (the part after ``[x]``,
+    before any ``#tag``).  Used to preserve user check states when
+    regenerating a note.
+    """
+    checked: set[str] = set()
+    in_todo = False
+    for line in content.splitlines():
+        if line.strip() == "### To-do List":
+            in_todo = True
+            continue
+        if in_todo and line.startswith("### "):
+            break
+        if in_todo:
+            m = _TODO_CHECK_RE.match(line)
+            if m:
+                # Extract task text before first # tag
+                raw = m.group(1)
+                task_part = re.split(r'\s+#', raw)[0].strip()
+                if task_part:
+                    checked.add(task_part)
+    return checked
+
 
 def parse_preserved_fields(content: str) -> dict[str, str]:
     """Extract user-editable frontmatter fields from an existing note.
@@ -280,6 +329,7 @@ def compose(
     analysis: "AnalysisResult | None" = None,
     preserved_fields: dict[str, str] | None = None,
     cid_map: dict[str, str] | None = None,
+    checked_todos: set[str] | None = None,
 ) -> str:
     """Return the full Markdown string for one message.
 
@@ -295,6 +345,9 @@ def compose(
                           a previous version of this note via
                           :func:`parse_preserved_fields`.  When provided, the
                           values are carried over into the new frontmatter.
+        checked_todos:    Set of task description strings that were previously
+                          checked off by the user.  When provided, matching
+                          items use ``[x]`` instead of ``[ ]``.
 
     Returns a string ready to be written as a .md file.
     """
@@ -345,6 +398,28 @@ def compose(
     lines.append(f"link: {_link_val}" if _link_val else "link:")
     lines.append("---")
     lines.append("")
+
+    # ── To-do List section ────────────────────────────────────────────── #
+    action_items = analysis.action_items if analysis else []
+    if action_items:
+        _checked_todos = checked_todos or set()
+        sender_name = _extract_sender_name(message.sender).replace(' ', '_')
+        lines.append("### To-do List")
+        lines.append("")
+        for item in action_items:
+            task = item.get("task", "")
+            assignee = item.get("assignee", "")
+            if not task:
+                continue
+            check = "x" if task in _checked_todos else " "
+            tag_parts = []
+            if assignee:
+                tag_parts.append(f"#{assignee.replace(' ', '_')}")
+            if sender_name:
+                tag_parts.append(f"#{sender_name}")
+            tag_str = " ".join(tag_parts)
+            lines.append(f"- [{check}] {task} {tag_str}".rstrip())
+        lines.append("")
 
     # ── 요약 section ──────────────────────────────────────────────────── #
     lines.append("### 요약")

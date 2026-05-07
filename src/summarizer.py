@@ -39,6 +39,7 @@ class AnalysisResult:
     description: str = ""     # 100자 이내 메일 한 줄 요약
     media_tags: list[str] = field(default_factory=list)       # AI-selected media keywords
     subsidiary_tags: list[str] = field(default_factory=list)  # AI-selected subsidiary keywords
+    action_items: list[dict] = field(default_factory=list)    # [{"task": "...", "assignee": "..."}]
     source: str = "fallback"  # "claude" | "fallback"
 
 def _fallback_summary(body_text: str) -> str:
@@ -201,7 +202,11 @@ _ANALYZE_PROMPT = """\
   "priority": "보통",
   "category": "일반",
   "media_tags": ["CM360", "DV360"],
-  "subsidiary_tags": ["SEF"]
+  "subsidiary_tags": ["SEF"],
+  "action_items": [
+    {{"task": "DL테이블 컬럼 추가 후 결과 공유", "assignee": "이자명"}},
+    {{"task": "GMPD 대시보드 피드백 반영", "assignee": "최원영"}}
+  ]
 }}
 
 규칙:
@@ -228,6 +233,7 @@ _ANALYZE_PROMPT = """\
 - subsidiary_tags: 이 메일에서 실제로 삼성전자 해외법인(subsidiary) 코드로서 언급된 키워드만 골라줘. 아래 허용 목록에서만 선택. 일반 영단어로 쓰인 경우는 반드시 제외.
   허용 목록: """ + ", ".join(_SUBSIDIARY_KEYWORDS) + """
   주���: "SET"은 삼성전자 대만법인일 때만 ("set up", "data set" 제외). "SEC"은 삼성전자 본사일 때만 ("section" 제외). "SEA"는 미국법인(Samsung Electronics America)일 때만 ("sea" 바다 제외). "LA"는 라틴아메리카법인일 때만 (도시명 제외). 없으면 []
+- action_items: 메일에서 추출한 구체적 액션 아이템 목록. 각 항목에 task(해야 할 일, 20자 이내)와 assignee(담당자 이름) 포함. 발신자가 요청한 구체적인 할 일만 추출 (단순 확인/열람은 제외). 없으면 빈 배열 [].
 - 본문이 이메일 체인(RE: RE:)인 경우, 가장 최근 회신 내용을 중심으로 분석해. 인용된 이전 메시지는 맥락 참고만 해.
 
 제목: {subject}
@@ -304,6 +310,15 @@ def analyze_email(
         description = str(data.get("description", "")).strip()[:100]
         media_tags = [str(t).strip() for t in data.get("media_tags", []) if str(t).strip()]
         subsidiary_tags = [str(t).strip() for t in data.get("subsidiary_tags", []) if str(t).strip()]
+        raw_action_items = data.get("action_items", [])
+        action_items: list[dict] = []
+        if isinstance(raw_action_items, list):
+            for item in raw_action_items:
+                if isinstance(item, dict) and item.get("task") and item.get("assignee"):
+                    action_items.append({
+                        "task": str(item["task"]).strip(),
+                        "assignee": normalize_name(str(item["assignee"]).strip()),
+                    })
 
         log.info("email analyzed", extra={
             "summary_lines": len(summary_bullets),
@@ -317,7 +332,8 @@ def analyze_email(
             summary=summary, assignees=assignees, priority=priority,
             category=category, short_title=short_title,
             description=description, media_tags=media_tags,
-            subsidiary_tags=subsidiary_tags, source="claude",
+            subsidiary_tags=subsidiary_tags, action_items=action_items,
+            source="claude",
         )
 
     except Exception as exc:

@@ -42,6 +42,16 @@ class Attachment:
 
 
 @dataclass
+class InlineImage:
+    """An inline image embedded in an email body via Content-ID."""
+    content_id: str         # e.g. "image001@01D7F9E1.xxx" (angle brackets removed)
+    mime_type: str           # e.g. "image/png"
+    filename: str           # e.g. "image001.png" or auto-generated
+    data: bytes             # decoded image bytes (always populated)
+    size: int
+
+
+@dataclass
 class ParsedMessage:
     message_id: str
     thread_id: str
@@ -52,6 +62,7 @@ class ParsedMessage:
     date_utc: str      # ISO-8601 UTC, e.g. "2024-01-15T10:30:00+00:00"
     body_text: str     # plain-text body ── NEVER LOG THIS FIELD
     attachments: list[Attachment] = field(default_factory=list)
+    inline_images: list[InlineImage] = field(default_factory=list)
 
 
 # ── Private helpers ────────────────────────────────────────────────── #
@@ -66,7 +77,7 @@ def _b64decode(data: str) -> bytes:
 def _html_to_text(html: str) -> str:
     h = html2text.HTML2Text()
     h.ignore_links = False
-    h.ignore_images = True
+    h.ignore_images = False
     h.body_width = 0        # no hard line-wrap
     return h.handle(html).strip()
 
@@ -136,6 +147,70 @@ def _extract_attachments(payload: dict) -> list[Attachment]:
     return results
 
 
+def _extract_inline_images(payload: dict, service, message_id: str) -> list[InlineImage]:
+    """Extract inline images (Content-ID parts) from the MIME tree.
+
+    If *service* is provided, large images (those with attachmentId but no
+    inline body data) are downloaded immediately so that ``InlineImage.data``
+    is always populated.
+    """
+    results: list[InlineImage] = []
+    counter = 0
+
+    def _walk(part: dict) -> None:
+        nonlocal counter
+        headers = {
+            h["name"].lower(): h["value"]
+            for h in part.get("headers", [])
+            if "name" in h and "value" in h
+        }
+        content_id = headers.get("content-id", "")
+        mime_type = part.get("mimeType", "")
+
+        if content_id and mime_type.startswith("image/"):
+            cid = content_id.strip("<>")
+
+            filename = part.get("filename", "")
+            if not filename:
+                ext = mime_type.split("/")[-1]
+                if ext == "jpeg":
+                    ext = "jpg"
+                counter += 1
+                filename = f"inline_image_{counter:03d}.{ext}"
+
+            body = part.get("body", {})
+            body_data = body.get("data", "")
+            attachment_id = body.get("attachmentId", "")
+            size = body.get("size", 0)
+
+            data: bytes = b""
+            if body_data:
+                data = _b64decode(body_data)
+            elif attachment_id and service:
+                try:
+                    data = download_attachment(service, message_id, attachment_id)
+                except Exception as exc:
+                    log.warning(
+                        "Failed to download inline image",
+                        extra={"filename": filename, "error": str(exc)},
+                    )
+
+            if data:
+                results.append(InlineImage(
+                    content_id=cid,
+                    mime_type=mime_type,
+                    filename=filename,
+                    data=data,
+                    size=size or len(data),
+                ))
+
+        for subpart in part.get("parts", []):
+            _walk(subpart)
+
+    _walk(payload)
+    return results
+
+
 def _parse_date(date_str: str) -> str:
     """Parse an RFC 2822 Date header to an ISO-8601 UTC string.
 
@@ -151,7 +226,7 @@ def _parse_date(date_str: str) -> str:
         return datetime.now(tz=timezone.utc).isoformat()
 
 
-def _parse_message(raw: dict) -> ParsedMessage:
+def _parse_message(raw: dict, service=None) -> ParsedMessage:
     payload = raw.get("payload", {})
     headers: dict[str, str] = {
         h["name"].lower(): h["value"]
@@ -159,10 +234,11 @@ def _parse_message(raw: dict) -> ParsedMessage:
         if "name" in h and "value" in h
     }
     subject = headers.get("subject", "(no subject)")
+    msg_id = raw["id"]
 
     return ParsedMessage(
-        message_id=raw["id"],
-        thread_id=raw.get("threadId", raw["id"]),
+        message_id=msg_id,
+        thread_id=raw.get("threadId", msg_id),
         subject=subject,
         sender=headers.get("from", ""),
         to=headers.get("to", ""),
@@ -170,6 +246,7 @@ def _parse_message(raw: dict) -> ParsedMessage:
         date_utc=_parse_date(headers.get("date", "")),
         body_text=_extract_body(payload),           # NEVER LOG
         attachments=_extract_attachments(payload),
+        inline_images=_extract_inline_images(payload, service, msg_id),
     )
 
 
@@ -243,13 +320,14 @@ def fetch_message(service, message_id: str) -> ParsedMessage:
         )
         raise
 
-    msg = _parse_message(raw)
+    msg = _parse_message(raw, service=service)
     log.info(
         "fetched message",
         extra={
             "message_id": msg.message_id,
             "subject": msg.subject[:_SUBJECT_LOG_LIMIT],   # hard limit
             "attachments": len(msg.attachments),
+            "inline_images": len(msg.inline_images),
         },
     )
     return msg

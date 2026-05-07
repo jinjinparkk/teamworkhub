@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.md_writer import compose, filename_for, filename_for_subject, _clean_body
+from src.md_writer import compose, filename_for, filename_for_subject, _clean_body, parse_preserved_fields
 from src.summarizer import AnalysisResult
 
 
@@ -444,7 +444,8 @@ class TestCleanBody:
         assert "The information in this email" not in result
         assert "본문 내용" in result
 
-    def test_signature_separator_truncates(self):
+    def test_signature_separator_preserved_for_threads(self):
+        """Signature separator no longer truncates — full thread preserved."""
         sig = (
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "권예지 | Yeji Kwon\n"
@@ -452,15 +453,15 @@ class TestCleanBody:
         )
         text = "본문 내용입니다.\n감사합니다.\n" + sig
         result = _clean_body(text)
-        assert "권예지" not in result
+        assert "권예지" in result
         assert "본문 내용입니다" in result
 
-    def test_signature_separator_light_horizontal(self):
-        """─ (U+2500) separator also works."""
+    def test_separator_light_horizontal_preserved(self):
+        """─ (U+2500) separator content also preserved for threads."""
         sig = "─────────────────────\n이름 | Name\nEmail: test@test.com\n"
         text = "업무 보고\n" + sig
         result = _clean_body(text)
-        assert "이름 | Name" not in result
+        assert "이름 | Name" in result
         assert "업무 보고" in result
 
     def test_signature_kept_if_tail_too_long(self):
@@ -470,21 +471,20 @@ class TestCleanBody:
         result = _clean_body(text)
         assert "중요한 내용입니다" in result
 
-    def test_multiple_separators_uses_last(self):
-        """Only the last separator is checked for truncation."""
+    def test_multiple_separators_all_preserved(self):
+        """All content across separators is preserved for thread support."""
         text = (
             "내용1\n━━━━━━━━\n"
             "전달된 메일 내용 (길다)" + "x" * 600 + "\n"
             "━━━━━━━━\n"
-            "짧은 서명\n"
+            "원본 메시지\n"
         )
         result = _clean_body(text)
-        # First separator's content kept (>500 chars), last separator truncated
         assert "내용1" in result
-        assert "짧은 서명" not in result
+        assert "원본 메시지" in result
 
-    def test_combined_junk_all_removed(self):
-        """Real-world scenario: CID + tracking + disclaimer + signature."""
+    def test_combined_junk_cleaned_but_thread_preserved(self):
+        """CID + tracking + disclaimer removed; separator content preserved."""
         text = (
             "안녕하세요,\n"
             "업무 보고 드립니다.\n\n"
@@ -502,7 +502,8 @@ class TestCleanBody:
         assert "업무 보고" in result
         assert "감사합니다" in result
         assert "cid:" not in result
-        assert "홍길동" not in result
+        # Signature content now preserved (thread support)
+        assert "홍길동" in result
         assert "The information" not in result
         assert "ext.samsung.net" not in result
         assert "조직 외부" not in result
@@ -514,3 +515,62 @@ class TestCleanBody:
         assert "cid:" not in md
         assert "tracker.com" not in md
         assert "본문" in md
+
+
+# ── parse_preserved_fields ─────────────────────────────────────────── #
+
+class TestParsePreservedFields:
+    def test_extracts_result_and_link(self):
+        content = (
+            '---\nemail_title: "test"\ndate: 2026-05-04\n'
+            'result: 회신 완료\nlink: "[[관련 문서]]"\n---\n### 요약\n'
+        )
+        pf = parse_preserved_fields(content)
+        assert pf["result"] == "회신 완료"
+        assert pf["link"] == '"[[관련 문서]]"'
+
+    def test_empty_fields_return_empty_strings(self):
+        content = '---\nemail_title: "test"\nresult:\nlink:\n---\n'
+        pf = parse_preserved_fields(content)
+        assert pf["result"] == ""
+        assert pf["link"] == ""
+
+    def test_no_frontmatter(self):
+        pf = parse_preserved_fields("그냥 텍스트")
+        assert pf == {"result": "", "link": ""}
+
+    def test_missing_fields(self):
+        content = '---\nemail_title: "test"\n---\n'
+        pf = parse_preserved_fields(content)
+        assert pf["result"] == ""
+        assert pf["link"] == ""
+
+
+# ── compose — preserved_fields ─────────────────────────────────────── #
+
+class TestComposePreservedFields:
+    def test_result_preserved_in_frontmatter(self):
+        pf = {"result": "승인 완료", "link": ""}
+        md = compose(_msg(), [], PROCESSED_AT, preserved_fields=pf)
+        assert "result: 승인 완료" in md
+
+    def test_link_preserved_in_frontmatter(self):
+        pf = {"result": "", "link": '"[[관련 문서]]"'}
+        md = compose(_msg(), [], PROCESSED_AT, preserved_fields=pf)
+        assert 'link: "[[관련 문서]]"' in md
+
+    def test_both_preserved(self):
+        pf = {"result": "처리함", "link": "http://example.com"}
+        md = compose(_msg(), [], PROCESSED_AT, preserved_fields=pf)
+        assert "result: 처리함" in md
+        assert "link: http://example.com" in md
+
+    def test_none_preserved_fields_gives_empty(self):
+        md = compose(_msg(), [], PROCESSED_AT, preserved_fields=None)
+        assert "\nresult:\n" in md
+        assert "\nlink:\n" in md
+
+    def test_empty_dict_gives_empty(self):
+        md = compose(_msg(), [], PROCESSED_AT, preserved_fields={})
+        assert "\nresult:\n" in md
+        assert "\nlink:\n" in md

@@ -156,16 +156,13 @@ def find_file_by_name(service, filename: str, parent_id: str) -> DriveFile | Non
         f"and '{_escape_query(parent_id)}' in parents "
         f"and trashed=false"
     )
-    try:
-        resp = service.files().list(
-            q=query,
-            fields=f"files({_DRIVE_FIELDS})",
-            spaces="drive",
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True,
-        ).execute()
-    except HttpError:
-        raise
+    resp = service.files().list(
+        q=query,
+        fields=f"files({_DRIVE_FIELDS})",
+        spaces="drive",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+    ).execute()
 
     files = resp.get("files", [])
     if not files:
@@ -235,6 +232,42 @@ def upload_attachment(
     log.info(
         "attachment uploaded",
         extra={"message_id": message_id, "att_name": name, "file_id": result.file_id},
+    )
+    return result
+
+
+def upload_binary(
+    service,
+    parent_id: str,
+    filename: str,
+    content: bytes,
+    mime_type: str,
+) -> DriveFile:
+    """Upload arbitrary binary content; skip silently if the file already exists.
+
+    Idempotency: if a file with the same *filename* already exists in
+    *parent_id*, returns the existing DriveFile with created=False.
+    """
+    existing = find_file_by_name(service, filename, parent_id)
+    if existing:
+        log.info(
+            "binary file already in Drive -- skipped",
+            extra={"md_filename": filename},
+        )
+        return existing
+
+    media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime_type, resumable=False)
+    raw = service.files().create(
+        body={"name": filename, "parents": [parent_id]},
+        media_body=media,
+        fields=_DRIVE_FIELDS,
+        supportsAllDrives=True,
+    ).execute()
+
+    result = _to_drive_file(raw, created=True)
+    log.info(
+        "binary file uploaded",
+        extra={"md_filename": filename, "file_id": result.file_id},
     )
     return result
 

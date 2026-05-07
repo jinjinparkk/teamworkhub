@@ -1,20 +1,21 @@
-"""Weekly digest Markdown composer.
+"""Monthly digest Markdown composer.
 
-Generates a single Obsidian weekly report aggregating Mon~Fri emails.
-Groups by category and priority, lists unprocessed items.
+Generates a single Obsidian monthly report aggregating all emails in a calendar month.
+Includes stats, top senders, category breakdown, and assignee summary.
 
-Output filename pattern: YYYY-WNN.md  (e.g. 2026-W14.md)
+Output filename pattern: YYYY-MM.md  (e.g. 2026-04.md)
 
 Usage
-─────
-  from src.weekly_writer import compose_weekly, filename_for_week
+-----
+  from src.monthly_writer import compose_monthly, filename_for_month
 
-  md = compose_weekly(messages_with_analysis, "2026-W14",
-                      "2026-03-30", "2026-04-03", "Asia/Seoul")
-  name = filename_for_week("2026-W14")   # "2026-W14.md"
+  md = compose_monthly(messages_with_analysis, "2026-04",
+                       "2026-04-01", "2026-04-30", "Asia/Seoul")
+  name = filename_for_month("2026-04")   # "2026-04.md"
 """
 from __future__ import annotations
 
+from collections import Counter
 from typing import TYPE_CHECKING
 
 from src.config import TEAM_MEMBERS
@@ -31,28 +32,28 @@ _PRIORITY_ORDER = ["긴급", "보통", "낮음"]
 _CATEGORY_ORDER = ["보고", "승인요청", "공지", "미팅", "일반"]
 
 
-def filename_for_week(week_str: str) -> str:
-    """Return the Weekly Note filename for *week_str* (``YYYY-WNN``).
+def filename_for_month(month_str: str) -> str:
+    """Return the Monthly Note filename for *month_str* (``YYYY-MM``).
 
-    Example: "2026-W14" → "2026-W14.md"
+    Example: "2026-04" -> "2026-04.md"
     """
-    return f"{week_str}.md"
+    return f"{month_str}.md"
 
 
-def compose_weekly(
+def compose_monthly(
     messages: list[tuple["ParsedMessage", "AnalysisResult"]],
-    week_str: str,
+    month_str: str,
     date_from: str,
     date_to: str,
     timezone_name: str = "Asia/Seoul",
 ) -> str:
-    """Return a Weekly Report Markdown string.
+    """Return a Monthly Report Markdown string.
 
     Args:
-        messages:      List of (ParsedMessage, AnalysisResult) pairs for the week.
-        week_str:      ISO week string, e.g. "2026-W14".
-        date_from:     First day of the week, e.g. "2026-03-30 (월)".
-        date_to:       Last day of the week, e.g. "2026-04-03 (금)".
+        messages:      List of (ParsedMessage, AnalysisResult) pairs for the month.
+        month_str:     Month string, e.g. "2026-04".
+        date_from:     First day of the month, e.g. "2026-04-01".
+        date_to:       Last day of the month, e.g. "2026-04-30".
         timezone_name: Timezone label shown in the note header.
 
     Returns a UTF-8 string ready to be written as a .md file.
@@ -62,39 +63,41 @@ def compose_weekly(
 
     lines: list[str] = []
 
-    # ── YAML frontmatter ──────────────────────────────────────────────── #
+    # -- YAML frontmatter ------------------------------------------------- #
     lines.append("---")
-    lines.append(f"week: {week_str}")
-    lines.append(f"type: weekly-digest")
+    lines.append(f"month: {month_str}")
+    lines.append(f"type: monthly-digest")
     lines.append(f'period: "{date_from} ~ {date_to} ({tz_short})"')
     lines.append(f"email_count: {count}")
     lines.append("---")
     lines.append("")
 
-    # ── Header ────────────────────────────────────────────────────────── #
-    lines.append(f"# 📋 {week_str} 주간 메일 리포트 ({count}건)")
+    # -- Header ----------------------------------------------------------- #
+    lines.append(f"# 📅 {month_str} 월간 메일 리포트 ({count}건)")
     lines.append(f"_기간: {date_from} ~ {date_to} ({tz_short})_")
     lines.append("")
 
     if not messages:
-        lines.append("_해당 주 수신 메일 없음_")
+        lines.append("_해당 월 수신 메일 없음_")
         lines.append("")
         lines.append("---")
         lines.append("_TeamWorkHub 자동 생성_")
         return "\n".join(lines)
 
-    # ── Stats ─────────────────────────────────────────────────────────── #
+    # -- Stats ------------------------------------------------------------ #
     priority_counts: dict[str, int] = {}
     category_counts: dict[str, int] = {}
     assignee_counts: dict[str, int] = {}
+    sender_counter: Counter[str] = Counter()
 
-    for _, ar in messages:
+    for msg, ar in messages:
         priority_counts[ar.priority] = priority_counts.get(ar.priority, 0) + 1
         category_counts[ar.category] = category_counts.get(ar.category, 0) + 1
         for name in ar.assignees:
             assignee_counts[name] = assignee_counts.get(name, 0) + 1
+        sender_counter[msg.sender] += 1
 
-    lines.append("## 📊 주간 통계")
+    lines.append("## 📊 월간 통계")
     lines.append("")
     lines.append("**우선순위별:**")
     for p in _PRIORITY_ORDER:
@@ -116,21 +119,16 @@ def compose_weekly(
     lines.append("---")
     lines.append("")
 
-    # ── Unprocessed items — Obsidian Tasks plugin live query ─────────── #
-    lines.append("## ⚠️ 미처리 체크리스트")
+    # -- Top senders ------------------------------------------------------ #
+    lines.append("## 📨 발신자 TOP 5")
     lines.append("")
-    lines.append("> Daily Note에서 체크하면 여기서도 자동으로 사라져요. (Obsidian Tasks 플러그인 필요)")
-    lines.append("")
-    lines.append("```tasks")
-    lines.append("not done")
-    lines.append("path includes TeamWorkHub_Daily")
-    lines.append("sort by path")
-    lines.append("```")
+    for rank, (sender, cnt) in enumerate(sender_counter.most_common(5), 1):
+        lines.append(f"{rank}. **{sender}** — {cnt}건")
     lines.append("")
     lines.append("---")
     lines.append("")
 
-    # ── Full list by category ─────────────────────────────────────────── #
+    # -- Category breakdown ----------------------------------------------- #
     lines.append("## 📂 카테고리별 전체 목록")
     lines.append("")
     for cat in _CATEGORY_ORDER:
@@ -141,16 +139,9 @@ def compose_weekly(
         for msg, ar in cat_msgs:
             p_emoji = _PRIORITY_EMOJI.get(ar.priority, "🟡")
             assignee_str = ", ".join(f"#{n}" for n in ar.assignees) if ar.assignees else "#미지정"
-            lines.append(f"#### {msg.subject or '(제목 없음)'}")
-            lines.append(f"{p_emoji} #{ar.priority}  {assignee_str}  ")
-            lines.append(f"**From:** {msg.sender}  **Date:** {msg.date_utc[:10]}")
-            if ar.summary:
-                lines.append("")
-                for bullet in ar.summary.strip().splitlines():
-                    lines.append(f"> {bullet}")
-            lines.append("")
-        lines.append("---")
+            lines.append(f"- {p_emoji} **{msg.subject or '(제목 없음)'}** — {msg.sender} ({msg.date_utc[:10]}) {assignee_str}")
         lines.append("")
 
+    lines.append("---")
     lines.append("_TeamWorkHub 자동 생성_")
     return "\n".join(lines)

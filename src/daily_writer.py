@@ -20,7 +20,7 @@ from datetime import date as _date
 from typing import TYPE_CHECKING
 
 from src.config import KNOWN_ASSIGNEES
-from src.md_writer import filename_for_subject
+from src.md_writer import filename_for_subject, _extract_sender_name
 
 if TYPE_CHECKING:
     from src.gmail_client import ParsedMessage
@@ -152,7 +152,6 @@ def compose_daily(
     timezone_name: str = "Asia/Seoul",
     daily_folder: str = "TeamWorkHub_Daily",
     note_folder: str = "",
-    checked_items: set[str] | None = None,
 ) -> str:
     """Return a Daily Note Markdown string aggregating overnight emails.
 
@@ -167,9 +166,6 @@ def compose_daily(
         note_folder:   Obsidian folder name for individual email notes. When set,
                        wiki-links include the folder path so Obsidian resolves
                        cross-folder links correctly (e.g. "TeamWorkHub/제목").
-        checked_items: Set of wiki-link targets (including folder prefix) that
-                       were previously checked off by the user. When provided,
-                       matching items use ``[x]`` instead of ``[ ]``.
 
     Returns a UTF-8 string ready to be written as a .md file.
     """
@@ -186,7 +182,6 @@ def compose_daily(
     has_urgent = False
 
     if messages:
-        _checked = checked_items or set()
         seen_wiki: dict[str, tuple[str, set[str]]] = {}  # wiki_name → (sender, keywords)
         for msg, ar in messages:
             subject = msg.subject or "(제목 없음)"
@@ -206,15 +201,26 @@ def compose_daily(
             else:
                 wiki_target = wiki_name
                 wiki_link = f"{wiki_name}|{display}" if ar.short_title else wiki_name
-            cleaned = _clean_assignees(ar.assignees)
-            tags = " ".join(f"#{a}" for a in cleaned) if cleaned else "#미지정"
-            check = "x" if wiki_target in _checked else " "
-            todo_lines.append(f"- [{check}] [[{wiki_link}]] {tags}")
+            # Use action_items assignees first, fallback to ar.assignees
+            if ar.action_items:
+                ai_assignees = list(dict.fromkeys(
+                    item.get("assignee", "") for item in ar.action_items
+                    if item.get("assignee")
+                ))
+                cleaned = _clean_assignees(ai_assignees) or _clean_assignees(ar.assignees)
+            else:
+                cleaned = _clean_assignees(ar.assignees)
+            tag_parts = [f"#{a}" for a in cleaned] if cleaned else ["#미지정"]
+            sender_tag = _extract_sender_name(sender).replace(' ', '_')
+            if sender_tag:
+                tag_parts.append(f"#{sender_tag}")
+            tags = " ".join(tag_parts)
+            todo_lines.append(f"- [[{wiki_link}]] {tags}")
             all_assignees.update(cleaned)
             if ar.priority == "긴급":
                 has_urgent = True
 
-    # ── YAML frontmatter ──────────────────────────────────────────────── #
+    # ── YAML frontmatter──────────────────────────────────────────────── #
     sorted_assignees = sorted(all_assignees)
 
     lines.append("---")
@@ -235,7 +241,7 @@ def compose_daily(
     if todo_lines:
         lines.extend(todo_lines)
     else:
-        lines.append("- [ ]")
+        lines.append("- (없음)")
 
     lines.append("")
 
@@ -249,11 +255,12 @@ def compose_daily(
     lines.append("")
 
     # ── 미완료 (Dataview) ───────────────────────────────────────────── #
+    _dv_folder = note_folder or daily_folder
     lines.append("### 미완료")
     lines.append("")
     lines.append("```dataview")
-    lines.append(f'TASK FROM "{daily_folder}"')
-    lines.append('WHERE !completed AND date(file.name) >= date(today) - dur(14d) AND text != ""')
+    lines.append(f'TASK FROM "{_dv_folder}"')
+    lines.append('WHERE !completed AND date >= date(today) - dur(14d) AND text != ""')
     lines.append("```")
     lines.append("")
 
@@ -377,7 +384,15 @@ def merge_daily(
 
         wiki_target = f"{note_folder}/{wiki_name}" if note_folder else wiki_name
 
-        cleaned = _clean_assignees(ar.assignees)
+        # Use action_items assignees first, fallback to ar.assignees
+        if ar.action_items:
+            ai_assignees = list(dict.fromkeys(
+                item.get("assignee", "") for item in ar.action_items
+                if item.get("assignee")
+            ))
+            cleaned = _clean_assignees(ai_assignees) or _clean_assignees(ar.assignees)
+        else:
+            cleaned = _clean_assignees(ar.assignees)
 
         if wiki_target in existing_links or wiki_name in existing_base_names:
             # Already in the note — still count assignees/urgency for frontmatter
@@ -386,7 +401,7 @@ def merge_daily(
                 any_urgent = True
             continue
 
-        # Build checkbox line
+        # Build wiki-link line (no checkbox)
         display = ar.short_title or wiki_name
         if note_folder:
             wiki_link = f"{wiki_target}|{display}"
@@ -394,12 +409,12 @@ def merge_daily(
             wiki_link = (
                 f"{wiki_name}|{display}" if ar.short_title else wiki_name
             )
-        tags = (
-            " ".join(f"#{a}" for a in cleaned)
-            if cleaned
-            else "#미지정"
-        )
-        new_items.append(f"- [ ] [[{wiki_link}]] {tags}")
+        tag_parts = [f"#{a}" for a in cleaned] if cleaned else ["#미지정"]
+        sender_tag = _extract_sender_name(sender).replace(' ', '_')
+        if sender_tag:
+            tag_parts.append(f"#{sender_tag}")
+        tags = " ".join(tag_parts)
+        new_items.append(f"- [[{wiki_link}]] {tags}")
 
         # Only count assignees/urgency for items that actually appear in To-do
         all_msg_assignees.update(cleaned)
@@ -422,9 +437,9 @@ def merge_daily(
                 break
 
         if todo_start != -1:
-            # Remove bare "- [ ]" empty placeholder (0-message initial note)
+            # Remove bare placeholder (0-message initial note)
             for i in range(todo_start + 1, todo_end):
-                if lines[i].strip() == "- [ ]":
+                if lines[i].strip() in ("- [ ]", "- (없음)"):
                     lines.pop(i)
                     todo_end -= 1
                     break
@@ -438,6 +453,13 @@ def merge_daily(
 
             for j, item in enumerate(new_items):
                 lines.insert(insert_at + j, item)
+
+    # Migrate existing checkbox lines to plain list items
+    _checkbox_re = re.compile(r'^(\s*)-\s*\[[xX ]\]\s*(.*)$')
+    for i, line in enumerate(lines):
+        m = _checkbox_re.match(line)
+        if m and "[[" in line:
+            lines[i] = f"{m.group(1)}- {m.group(2)}"
 
     result = "\n".join(lines)
 

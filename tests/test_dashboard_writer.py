@@ -158,7 +158,7 @@ class TestComposeAssigneePageContent:
 
     def test_name_in_dataview_filter(self):
         md = compose_assignee_page("박은진", DAILY)
-        assert 'contains(assignees, "박은진")' in md
+        assert 'contains(file.tasks.text, "#박은진")' in md
 
     def test_footer_present(self):
         md = compose_assignee_page("박은진", DAILY)

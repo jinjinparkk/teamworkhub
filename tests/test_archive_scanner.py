@@ -5,7 +5,6 @@ No real Drive/Claude API calls — everything is mocked.
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest

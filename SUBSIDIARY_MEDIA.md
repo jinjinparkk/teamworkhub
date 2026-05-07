@@ -71,9 +71,9 @@
 | # | 키워드 |
 |---|---|
 | 1 | TRUEVIEW |
-| 2 | WE CHAT |
+| 2 | WE_CHAT |
 | 3 | LINKEDIN |
-| 4 | SQ NEWS |
+| 4 | SQ_NEWS |
 | 5 | 微信搜一搜 |
 | 6 | LINEADS |
 | 7 | INDEPENDENT |
@@ -84,27 +84,27 @@
 | 12 | TTD |
 | 13 | TENCENT |
 | 14 | BING |
-| 15 | PAID MEDIA |
+| 15 | PAID_MEDIA |
 | 16 | JINRICHENGZHANG |
 | 17 | NOSP |
 | 18 | URLTARGET |
-| 19 | DISCOVERY + |
+| 19 | DISCOVERY+ |
 | 20 | 小红书 |
-| 21 | DUODUO VIDEO |
+| 21 | DUODUO_VIDEO |
 | 22 | YDN |
-| 23 | LOCAL OFFLINE PUBLISHER |
+| 23 | LOCAL_OFFLINE_PUBLISHER |
 | 24 | AFFILIATE |
-| 25 | PAID SOCIAL |
+| 25 | PAID_SOCIAL |
 | 26 | X |
 | 27 | RED |
 | 28 | BLUETV |
 | 29 | QQ |
 | 30 | SHENGQIANKUAIBAO |
-| 31 | ZEST BUY |
-| 32 | LOCAL PUBLISHER |
+| 31 | ZEST_BUY |
+| 32 | LOCAL_PUBLISHER |
 | 33 | IQIYI |
 | 34 | DISPLAY |
-| 35 | MANGO TV |
+| 35 | MANGO_TV |
 | 36 | TENGXUN |
 | 37 | MEITU |
 | 38 | BYTEDANCE |
@@ -124,10 +124,10 @@
 | 52 | SNAPCHAT |
 | 53 | BAIDU |
 | 54 | YAHOO |
-| 55 | GOOGLE ADS |
+| 55 | GOOGLE_ADS |
 | 56 | XANDR |
 | 57 | CTRIP |
-| 58 | PAID SEARCH |
+| 58 | PAID_SEARCH |
 | 59 | TEADS |
 | 60 | BILIBILI |
 | 61 | WEIXIN |

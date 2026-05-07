@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import re
 
+from src.config import TEAM_MEMBERS
+
 
 def filename_for_dashboard() -> str:
     """Return the Dashboard filename."""
@@ -37,6 +39,7 @@ def compose_dashboard(
     updated_date: str,
     daily_folder: str = "TeamWorkHub_Daily",
     weekly_folder: str = "TeamWorkHub_Weekly",
+    note_folder: str = "",
 ) -> str:
     """Return Dashboard.md content with Dataview plugin queries.
 
@@ -44,6 +47,9 @@ def compose_dashboard(
         updated_date:   ISO date string (YYYY-MM-DD) shown in the note.
         daily_folder:   Obsidian vault folder name for daily notes.
         weekly_folder:  Obsidian vault folder name for weekly reports.
+        note_folder:    Obsidian vault folder name for individual email notes.
+                        When set, Tasks/Dataview queries for To-do items target
+                        this folder instead of daily_folder.
 
     Returns a UTF-8 string ready to be written as Dashboard.md.
     Requires Obsidian Dataview and Tasks plugins.
@@ -84,15 +90,16 @@ def compose_dashboard(
     lines.append("")
 
     # ── Unprocessed checklist ─────────────────────────────────────────── #
+    _task_folder = note_folder or daily_folder
     lines.append("## ⚠️ 미처리 항목 (전체)")
     lines.append("")
     lines.append(
-        "> Daily Note에서 체크하면 자동으로 사라져요. (Tasks 플러그인 필요)"
+        "> 개별 메일 노트에서 체크하면 자동으로 사라져요. (Tasks 플러그인 필요)"
     )
     lines.append("")
     lines.append("```tasks")
     lines.append("not done")
-    lines.append(f"path includes {daily_folder}")
+    lines.append(f"path includes {_task_folder}")
     lines.append("sort by path")
     lines.append("```")
     lines.append("")
@@ -115,11 +122,13 @@ def compose_dashboard(
     # ── Assignee breakdown ────────────────────────────────────────────── #
     lines.append("## 👥 담당자별 메일 수 (최근 30일)")
     lines.append("")
+    team_list = ", ".join(f'"{m}"' for m in sorted(TEAM_MEMBERS))
     lines.append("```dataview")
     lines.append("TABLE length(rows) AS 메일수")
     lines.append(f'FROM "{daily_folder}"')
     lines.append("WHERE date >= date(today) - dur(30 days)")
     lines.append("FLATTEN assignees AS 담당자")
+    lines.append(f"WHERE contains(list({team_list}), 담당자)")
     lines.append("GROUP BY 담당자")
     lines.append("SORT length(rows) DESC")
     lines.append("```")
@@ -162,6 +171,7 @@ def compose_dashboard(
 def compose_assignee_page(
     name: str,
     daily_folder: str = "TeamWorkHub_Daily",
+    note_folder: str = "",
 ) -> str:
     """Return a per-assignee Obsidian page with Dataview queries.
 
@@ -170,6 +180,8 @@ def compose_assignee_page(
     Args:
         name:          Assignee name (e.g. "박은진").
         daily_folder:  Obsidian vault folder name for daily notes.
+        note_folder:   Obsidian vault folder name for individual email notes.
+                       When set, Tasks query targets this folder.
 
     Returns a UTF-8 string ready to be written as {name}.md.
     """
@@ -186,24 +198,26 @@ def compose_assignee_page(
     lines.append("")
 
     # ── Unprocessed items ─────────────────────────────────────────────── #
+    _task_folder = note_folder or daily_folder
     lines.append("## ⚠️ 미처리 항목")
     lines.append("")
     lines.append("```tasks")
     lines.append("not done")
-    lines.append(f"path includes {daily_folder}")
+    lines.append(f"path includes {_task_folder}")
+    lines.append(f"description includes #{name}")
     lines.append("```")
     lines.append("")
     lines.append("---")
     lines.append("")
 
     # ── All assigned emails ───────────────────────────────────────────── #
+    _dv_folder = note_folder or daily_folder
     lines.append("## 📋 담당 메일 전체 목록")
     lines.append("")
     lines.append("```dataview")
-    lines.append("TABLE date, email_count, categories, has_urgent AS 긴급")
-    lines.append(f'FROM "{daily_folder}"')
-    safe_name = name.replace('"', '\\"')
-    lines.append(f'WHERE contains(assignees, "{safe_name}")')
+    lines.append("TABLE date, sender, description")
+    lines.append(f'FROM "{_dv_folder}"')
+    lines.append(f'WHERE contains(file.tasks.text, "#{name}")')
     lines.append("SORT date DESC")
     lines.append("```")
     lines.append("")

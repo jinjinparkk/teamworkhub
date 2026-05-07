@@ -100,22 +100,22 @@ def _base_patches(
     """Return a dict of patch targets with sensible defaults."""
     creds = MagicMock()
     return {
-        "src.app.build_credentials": MagicMock(return_value=creds),
-        "src.app.build_gmail_service": MagicMock(return_value=MagicMock()),
-        "src.app.build_drive_service": MagicMock(return_value=MagicMock()),
-        "src.app.list_messages": MagicMock(return_value=list_messages_return or []),
-        "src.app.fetch_message": MagicMock(
+        "src.routes.sync.build_credentials": MagicMock(return_value=creds),
+        "src.routes.sync.build_gmail_service": MagicMock(return_value=MagicMock()),
+        "src.routes.sync.build_drive_service": MagicMock(return_value=MagicMock()),
+        "src.routes.sync.list_messages": MagicMock(return_value=list_messages_return or []),
+        "src.routes.sync.fetch_message": MagicMock(
             return_value=fetch_message_return or _parsed_message()
         ),
-        "src.app.find_file_by_name": MagicMock(return_value=find_file_by_name_return),
-        "src.app.download_attachment": MagicMock(return_value=download_attachment_return),
-        "src.app.upload_attachment": MagicMock(
+        "src.routes.sync.find_file_by_name": MagicMock(return_value=find_file_by_name_return),
+        "src.routes.sync.download_attachment": MagicMock(return_value=download_attachment_return),
+        "src.routes.sync.upload_attachment": MagicMock(
             return_value=upload_attachment_return or _drive_file()
         ),
-        "src.app.upsert_markdown": MagicMock(
+        "src.routes.sync.upsert_markdown": MagicMock(
             return_value=upsert_markdown_return or _drive_file(name="twh_msg001.md")
         ),
-        "src.app.analyze_email": MagicMock(return_value=AnalysisResult()),
+        "src.routes.sync.analyze_email": MagicMock(return_value=AnalysisResult()),
     }
 
 
@@ -168,16 +168,16 @@ class TestSyncNewMessage:
         stubs = [{"id": "msg001"}]
         patches = _base_patches(list_messages_return=stubs, find_file_by_name_return=None)
         _run_sync(client, patches)
-        patches["src.app.upsert_markdown"].assert_called_once()
+        patches["src.routes.sync.upsert_markdown"].assert_called_once()
 
     def test_fetch_message_called_with_correct_id(self, env, client):
         stubs = [{"id": "msg999"}]
         patches = _base_patches(list_messages_return=stubs, find_file_by_name_return=None)
         _run_sync(client, patches)
-        patches["src.app.fetch_message"].assert_called_once()
-        _, kwargs = patches["src.app.fetch_message"].call_args
+        patches["src.routes.sync.fetch_message"].assert_called_once()
+        _, kwargs = patches["src.routes.sync.fetch_message"].call_args
         # message_id is the second positional arg
-        args = patches["src.app.fetch_message"].call_args.args
+        args = patches["src.routes.sync.fetch_message"].call_args.args
         assert args[1] == "msg999"
 
     def test_multiple_new_messages_all_processed(self, env, client):
@@ -208,7 +208,7 @@ class TestSyncIdempotency:
             list_messages_return=stubs, find_file_by_name_return=existing_md
         )
         _run_sync(client, patches)
-        patches["src.app.fetch_message"].assert_not_called()
+        patches["src.routes.sync.fetch_message"].assert_not_called()
 
     def test_upsert_not_called_when_md_exists(self, env, client):
         stubs = [{"id": "msg001"}]
@@ -217,7 +217,7 @@ class TestSyncIdempotency:
             list_messages_return=stubs, find_file_by_name_return=existing_md
         )
         _run_sync(client, patches)
-        patches["src.app.upsert_markdown"].assert_not_called()
+        patches["src.routes.sync.upsert_markdown"].assert_not_called()
 
     def test_mixed_new_and_skipped(self, env, client):
         """Two messages: one already in Drive, one new."""
@@ -232,7 +232,7 @@ class TestSyncIdempotency:
             return None
 
         patches = _base_patches(list_messages_return=stubs)
-        patches["src.app.find_file_by_name"] = MagicMock(side_effect=find_side_effect)
+        patches["src.routes.sync.find_file_by_name"] = MagicMock(side_effect=find_side_effect)
         data = _run_sync(client, patches)
         assert data["processed"] == 1
         assert data["skipped"] == 1
@@ -251,8 +251,8 @@ class TestSyncAttachments:
             find_file_by_name_return=None,
         )
         _run_sync(client, patches)
-        patches["src.app.download_attachment"].assert_called_once()
-        patches["src.app.upload_attachment"].assert_called_once()
+        patches["src.routes.sync.download_attachment"].assert_called_once()
+        patches["src.routes.sync.upload_attachment"].assert_called_once()
 
     def test_attachment_download_failure_is_non_fatal(self, env, client):
         """If one attachment fails, the message should still be processed."""
@@ -264,13 +264,13 @@ class TestSyncAttachments:
             fetch_message_return=msg,
             find_file_by_name_return=None,
         )
-        patches["src.app.download_attachment"] = MagicMock(
+        patches["src.routes.sync.download_attachment"] = MagicMock(
             side_effect=Exception("network error")
         )
         data = _run_sync(client, patches)
         # The message is still processed (upsert called with empty drive_files)
         assert data["processed"] == 1
-        patches["src.app.upsert_markdown"].assert_called_once()
+        patches["src.routes.sync.upsert_markdown"].assert_called_once()
 
 
 # ── Error handling ───────────────────────────────────────────────────── #
@@ -278,7 +278,7 @@ class TestSyncAttachments:
 class TestSyncErrors:
     def test_auth_failure_returns_error_status(self, env, client):
         patches = _base_patches()
-        patches["src.app.build_credentials"] = MagicMock(
+        patches["src.routes.sync.build_credentials"] = MagicMock(
             side_effect=Exception("RefreshError: token expired")
         )
         data = _run_sync(client, patches)
@@ -287,7 +287,7 @@ class TestSyncErrors:
 
     def test_list_messages_failure_returns_error_status(self, env, client):
         patches = _base_patches()
-        patches["src.app.list_messages"] = MagicMock(
+        patches["src.routes.sync.list_messages"] = MagicMock(
             side_effect=Exception("HttpError 403")
         )
         data = _run_sync(client, patches)
@@ -299,7 +299,7 @@ class TestSyncErrors:
             list_messages_return=stubs,
             find_file_by_name_return=None,
         )
-        patches["src.app.fetch_message"] = MagicMock(
+        patches["src.routes.sync.fetch_message"] = MagicMock(
             side_effect=Exception("HttpError 404")
         )
         data = _run_sync(client, patches)
@@ -312,7 +312,7 @@ class TestSyncErrors:
             list_messages_return=stubs,
             find_file_by_name_return=None,
         )
-        patches["src.app.upsert_markdown"] = MagicMock(
+        patches["src.routes.sync.upsert_markdown"] = MagicMock(
             side_effect=Exception("Drive 500")
         )
         data = _run_sync(client, patches)
@@ -335,7 +335,7 @@ class TestSyncErrors:
             list_messages_return=stubs,
             find_file_by_name_return=None,
         )
-        patches["src.app.fetch_message"] = MagicMock(side_effect=fetch_side_effect)
+        patches["src.routes.sync.fetch_message"] = MagicMock(side_effect=fetch_side_effect)
         data = _run_sync(client, patches)
         assert data["processed"] == 2
         assert data["errors"] == 1
@@ -344,7 +344,7 @@ class TestSyncErrors:
     def test_find_file_failure_counts_as_error(self, env, client):
         stubs = [{"id": "msg001"}]
         patches = _base_patches(list_messages_return=stubs)
-        patches["src.app.find_file_by_name"] = MagicMock(
+        patches["src.routes.sync.find_file_by_name"] = MagicMock(
             side_effect=Exception("Drive 403")
         )
         data = _run_sync(client, patches)
@@ -356,7 +356,7 @@ class TestSyncErrors:
             list_messages_return=stubs,
             find_file_by_name_return=None,
         )
-        patches["src.app.fetch_message"] = MagicMock(side_effect=Exception("all fail"))
+        patches["src.routes.sync.fetch_message"] = MagicMock(side_effect=Exception("all fail"))
         data = _run_sync(client, patches)
         assert data["status"] == "error"
         assert data["processed"] == 0
@@ -395,7 +395,7 @@ class TestSyncMultiAccount:
 
         stubs = [{"id": "msg001"}]
         patches = _base_patches(list_messages_return=stubs, find_file_by_name_return=None)
-        patches["src.app.build_credentials"] = MagicMock(side_effect=creds_side_effect)
+        patches["src.routes.sync.build_credentials"] = MagicMock(side_effect=creds_side_effect)
         data = _run_sync(client, patches)
         # Account A failed (errors=1) but account B processed 1 message → partial
         assert data["errors"] == 1
@@ -415,7 +415,7 @@ class TestSyncMultiAccount:
 class TestSyncResponseShape:
     def test_always_returns_200(self, env, client):
         patches = _base_patches()
-        patches["src.app.build_credentials"] = MagicMock(side_effect=Exception("boom"))
+        patches["src.routes.sync.build_credentials"] = MagicMock(side_effect=Exception("boom"))
         from contextlib import ExitStack
         with ExitStack() as stack:
             for target, mock in patches.items():
@@ -429,7 +429,7 @@ class TestSyncResponseShape:
 
     def test_error_response_has_note_field(self, env, client):
         patches = _base_patches()
-        patches["src.app.build_credentials"] = MagicMock(side_effect=Exception("boom"))
+        patches["src.routes.sync.build_credentials"] = MagicMock(side_effect=Exception("boom"))
         data = _run_sync(client, patches)
         assert "note" in data
 

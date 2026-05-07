@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from src.daily_writer import compose_daily, filename_for_date, _normalise_subject
+from src.daily_writer import compose_daily, filename_for_date, _normalise_subject, parse_checked_items, merge_daily
 from src.summarizer import AnalysisResult
 
 
@@ -177,10 +177,10 @@ class TestComposeDailyMeta:
         md = compose_daily([], DATE, START, END, "Asia/Seoul")
         assert "Seoul" in md
 
-    def test_empty_messages_shows_empty_checkbox(self):
+    def test_empty_messages_shows_placeholder(self):
         md = compose_daily([], DATE, START, END, TZ)
-        # Empty state: shows a blank checkbox line
-        assert "- [ ]" in md
+        # Empty state: shows a placeholder line
+        assert "- (없음)" in md
 
 
 # ── compose_daily — To do list items ────────────────────────────────── #
@@ -190,9 +190,10 @@ class TestComposeDailyToDoList:
         md = compose_daily([(_msg(subject="업무 보고"), _ar())], DATE, START, END, TZ)
         assert "[[업무 보고]]" in md
 
-    def test_checkbox_per_email(self):
+    def test_list_item_per_email(self):
         md = compose_daily([(_msg(), _ar())], DATE, START, END, TZ)
-        assert "- [ ]" in md
+        assert "- [[" in md
+        assert "- [ ]" not in md
 
     def test_assignee_tag_first_only(self):
         """Only the first assignee is shown per To do list item."""
@@ -203,11 +204,12 @@ class TestComposeDailyToDoList:
         md = compose_daily([(_msg(), _ar())], DATE, START, END, TZ)
         assert "#미지정" in md
 
-    def test_multiple_emails_produce_multiple_checkboxes(self):
+    def test_multiple_emails_produce_multiple_list_items(self):
         msgs = [(_msg(subject=f"메일{i}"), _ar()) for i in range(3)]
         md = compose_daily(msgs, DATE, START, END, TZ)
-        # Should have at least 3 checkboxes (To do list items)
-        assert md.count("- [ ]") >= 3
+        # Should have at least 3 list items (no checkboxes)
+        assert md.count("- [[") >= 3
+        assert "- [ ]" not in md
 
     def test_subject_unsafe_chars_stripped_from_wiki_link(self):
         """Characters like : / * ? are stripped from wiki link names."""
@@ -298,3 +300,228 @@ class TestComposeDailyRecurringTasks:
     def test_sunday_has_no_recurring(self):
         md = compose_daily([], "2025-04-06", START, END, TZ)  # 일
         assert "#### 정기적인 일\n- (없음)" in md
+
+
+# ── parse_checked_items ──────────────────────────────────────────────── #
+
+class TestParseCheckedItems:
+    def test_extracts_checked_wiki_links(self):
+        content = (
+            "- [x] [[TeamWorkHub/업무 보고|업무 보고]] #박은진\n"
+            "- [ ] [[TeamWorkHub/회의록|회의록]] #미지정\n"
+        )
+        result = parse_checked_items(content)
+        assert result == {"TeamWorkHub/업무 보고"}
+
+    def test_extracts_uppercase_X(self):
+        content = "- [X] [[보고서]] #미지정\n"
+        result = parse_checked_items(content)
+        assert result == {"보고서"}
+
+    def test_unchecked_not_included(self):
+        content = "- [ ] [[업무 보고]] #미지정\n"
+        result = parse_checked_items(content)
+        assert result == set()
+
+    def test_empty_content(self):
+        assert parse_checked_items("") == set()
+
+    def test_multiple_checked_items(self):
+        content = (
+            "- [x] [[A/링크1|표시1]] #태그\n"
+            "- [x] [[A/링크2|표시2]] #태그\n"
+            "- [ ] [[A/링크3|표시3]] #태그\n"
+        )
+        result = parse_checked_items(content)
+        assert result == {"A/링크1", "A/링크2"}
+
+
+# ── compose_daily — no checkboxes in daily note ──────────────────────── #
+
+class TestComposeDailyNoCheckboxes:
+    def test_no_checkboxes_in_daily_items(self):
+        """Daily Note 항목에 체크박스가 없어야 함."""
+        msgs = [(_msg(subject="업무 보고"), _ar())]
+        md = compose_daily(msgs, DATE, START, END, TZ, note_folder="TeamWorkHub")
+        assert "- [[TeamWorkHub/업무 보고" in md
+        assert "- [ ]" not in md
+        assert "- [x]" not in md
+
+    def test_plain_list_items_with_tags(self):
+        """Daily Note 항목은 plain list + tag 형태."""
+        msgs = [
+            (_msg(subject="업무 보고"), _ar()),
+            (_msg(subject="회의록"), _ar()),
+        ]
+        md = compose_daily(msgs, DATE, START, END, TZ, note_folder="TeamWorkHub")
+        assert "- [[TeamWorkHub/업무 보고" in md
+        assert "- [[TeamWorkHub/회의록" in md
+
+    def test_items_are_plain_without_note_folder(self):
+        """note_folder 없이도 plain list."""
+        msgs = [(_msg(subject="업무 보고"), _ar())]
+        md = compose_daily(msgs, DATE, START, END, TZ)
+        assert "- [[업무 보고]]" in md
+        assert "- [ ]" not in md
+
+
+# ── merge_daily ────────────────────────────────────────────────────── #
+
+def _build_existing_daily(
+    items: list[str],
+    checked: set[str] | None = None,
+    user_lines: list[str] | None = None,
+    email_count: int | None = None,
+    assignees: list[str] | None = None,
+    has_urgent: bool = False,
+    extra_after_dataview: str = "",
+):
+    """Build a minimal existing daily note string for merge tests."""
+    _checked = checked or set()
+    _user_lines = user_lines or []
+    _assignees = assignees or []
+    if email_count is None:
+        email_count = len(items)
+
+    lines = [
+        "---",
+        "Type: daily_note",
+        f"date: {DATE}",
+        f'period: "{START} ~ {END} (Seoul)"',
+        f"email_count: {email_count}",
+        f"assignees: {_assignees}" if _assignees else "assignees: []",
+        f"has_urgent: {str(has_urgent).lower()}",
+        "---",
+        "",
+        "### Today's work",
+        "#### To do list",
+    ]
+    for wiki_target in items:
+        check = "x" if wiki_target in _checked else " "
+        display = wiki_target.split("/")[-1] if "/" in wiki_target else wiki_target
+        lines.append(f"- [{check}] [[{wiki_target}|{display}]] #미지정")
+    for ul in _user_lines:
+        lines.append(ul)
+    lines.append("")
+    lines.append("#### 정기적인 일")
+    lines.append("- 수정기")
+    lines.append("")
+    lines.append("### 미완료")
+    lines.append("")
+    lines.append("```dataview")
+    lines.append('TASK FROM "TeamWorkHub_Daily"')
+    lines.append('WHERE !completed AND date(file.name) >= date(today) - dur(14d) AND text != ""')
+    lines.append("```")
+    lines.append("")
+    if extra_after_dataview:
+        lines.append(extra_after_dataview)
+    return "\n".join(lines)
+
+
+NEW_START = "2025-04-01 18:00"
+NEW_END   = "2025-04-02 12:00"
+
+
+class TestMergeDaily:
+    def test_merge_adds_new_items_only(self):
+        """기존 3개 + 신규 1개 → To do list에 4개."""
+        existing = _build_existing_daily(
+            ["업무 보고", "회의록", "공지사항"], email_count=3,
+        )
+        msgs = [
+            (_msg(subject="업무 보고"), _ar()),
+            (_msg(subject="회의록"), _ar()),
+            (_msg(subject="공지사항"), _ar()),
+            (_msg(subject="출장 결과"), _ar()),
+        ]
+        result = merge_daily(existing, msgs, NEW_START, NEW_END, TZ)
+        assert "[[출장 결과]]" in result
+        assert result.count("[[업무 보고") == 1
+        assert "email_count: 4" in result
+
+    def test_merge_migrates_checkboxes_to_plain(self):
+        """기존 [x]/[ ] 체크박스가 plain list로 마이그레이션됨."""
+        existing = _build_existing_daily(
+            ["업무 보고", "회의록"],
+            checked={"업무 보고"},
+            email_count=2,
+        )
+        msgs = [(_msg(subject="출장 결과"), _ar())]
+        result = merge_daily(existing, msgs, NEW_START, NEW_END, TZ)
+        # Existing checkbox items should be migrated to plain list
+        assert "- [[업무 보고" in result
+        assert "- [[회의록" in result
+        # New items should also be plain
+        assert "- [[출장 결과]]" in result
+        # No checkboxes should remain
+        assert "- [x]" not in result
+        assert "- [ ] [[" not in result
+
+    def test_merge_preserves_user_added_lines(self):
+        """사용자가 To do 섹션에 직접 추가한 줄 보존."""
+        existing = _build_existing_daily(
+            ["업무 보고"],
+            user_lines=["- 내가 추가한 메모"],
+            email_count=1,
+        )
+        msgs = [(_msg(subject="출장 결과"), _ar())]
+        result = merge_daily(existing, msgs, NEW_START, NEW_END, TZ)
+        assert "내가 추가한 메모" in result
+        assert "[[출장 결과]]" in result
+
+    def test_merge_preserves_content_after_todo(self):
+        """정기적인 일, 미완료 Dataview, 파일 하단 자유 메모 보존."""
+        existing = _build_existing_daily(
+            ["업무 보고"],
+            email_count=1,
+            extra_after_dataview="## 자유 메모\n오늘 할 일 정리",
+        )
+        msgs = [(_msg(subject="출장 결과"), _ar())]
+        result = merge_daily(existing, msgs, NEW_START, NEW_END, TZ)
+        assert "#### 정기적인 일" in result
+        assert "- 수정기" in result
+        assert "### 미완료" in result
+        assert "```dataview" in result
+        assert "자유 메모" in result
+        assert "오늘 할 일 정리" in result
+
+    def test_merge_updates_frontmatter(self):
+        """email_count, period, assignees 갱신."""
+        existing = _build_existing_daily(
+            ["업무 보고"],
+            email_count=1,
+            assignees=["박은진"],
+        )
+        msgs = [
+            (_msg(subject="업무 보고"), _ar(assignees=["박은진"])),
+            (_msg(subject="출장 결과"), _ar(assignees=["이해랑"], priority="긴급")),
+        ]
+        result = merge_daily(existing, msgs, NEW_START, NEW_END, TZ)
+        assert "email_count: 2" in result
+        assert NEW_END in result
+        assert "이해랑" in result
+        assert "박은진" in result
+        assert "has_urgent: true" in result
+
+    def test_merge_no_duplicate_items(self):
+        """이미 존재하는 이메일은 중복 추가 안 됨."""
+        existing = _build_existing_daily(["업무 보고"], email_count=1)
+        msgs = [(_msg(subject="업무 보고"), _ar())]
+        result = merge_daily(existing, msgs, NEW_START, NEW_END, TZ)
+        assert result.count("[[업무 보고") == 1
+        assert "email_count: 1" in result
+
+    def test_merge_new_items_have_no_checkbox(self):
+        """새로 추가되는 항목에 체크박스가 없어야 함."""
+        existing = _build_existing_daily(["업무 보고"], email_count=1)
+        msgs = [
+            (_msg(subject="업무 보고"), _ar()),
+            (_msg(subject="출장 결과"), _ar()),
+        ]
+        result = merge_daily(existing, msgs, NEW_START, NEW_END, TZ)
+        # Find the new item line
+        for line in result.splitlines():
+            if "[[출장 결과]]" in line:
+                assert line.startswith("- [[")
+                assert "[ ]" not in line
+                break
