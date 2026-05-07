@@ -145,7 +145,6 @@ def compose_daily(
     Returns a UTF-8 string ready to be written as a .md file.
     """
     tz_short = timezone_name.split("/")[-1] if "/" in timezone_name else timezone_name
-    count = len(messages)
     note_date = _date.fromisoformat(date_str)
 
     lines: list[str] = []
@@ -201,7 +200,7 @@ def compose_daily(
     lines.append("Type: daily_note")
     lines.append(f"date: {date_str}")
     lines.append(f'period: "{period_start} ~ {period_end} ({tz_short})"')
-    lines.append(f"email_count: {count}")
+    lines.append(f"email_count: {len(todo_lines)}")
     if sorted_assignees:
         lines.append(f"assignees: {sorted_assignees}")
     else:
