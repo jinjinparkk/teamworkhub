@@ -257,18 +257,23 @@ def _extract_sender_name(sender: str) -> str:
     Examples:
         "김치성 <chisung@example.com>" → "김치성"
         "chisung@example.com"          → "chisung"
-        "Kim, Chisung"                 → "Kim, Chisung"
+        "GMPD 데이터 <gmpd@...>"      → "GMPD"
     """
     if not sender:
         return ""
     # "Name <email>" pattern
     m = re.match(r'^"?([^"<]+)"?\s*<', sender)
     if m:
-        return m.group(1).strip()
-    # Plain email — return local part
-    if "@" in sender and " " not in sender.strip():
-        return sender.split("@")[0]
-    return sender.strip()
+        name = m.group(1).strip()
+    elif "@" in sender and " " not in sender.strip():
+        # Plain email — return local part
+        name = sender.split("@")[0]
+    else:
+        name = sender.strip()
+    # Normalize GMPD variants (GMPD 데이터, GMPD DATA, GMPD_DATA, etc.) → "GMPD"
+    if name.upper().replace(" ", "").replace("_", "").startswith("GMPD"):
+        return "GMPD"
+    return name
 
 
 def parse_todo_checks(content: str) -> set[str]:
@@ -292,6 +297,8 @@ def parse_todo_checks(content: str) -> set[str]:
                 # Extract task text before first # tag
                 raw = m.group(1)
                 task_part = re.split(r'\s+#', raw)[0].strip()
+                # Un-escape markdown underscores so task text matches Claude output
+                task_part = task_part.replace(r"\_", "_")
                 if task_part:
                     checked.add(task_part)
     return checked
@@ -412,13 +419,15 @@ def compose(
             if not task:
                 continue
             check = "x" if task in _checked_todos else " "
+            # Escape underscores in task text to prevent Obsidian italic rendering
+            escaped_task = task.replace("_", r"\_")
             tag_parts = []
             if assignee:
                 tag_parts.append(f"#{assignee.replace(' ', '_')}")
             if sender_name:
                 tag_parts.append(f"#{sender_name}")
             tag_str = " ".join(tag_parts)
-            lines.append(f"- [{check}] {task} {tag_str}".rstrip())
+            lines.append(f"- [{check}] {escaped_task} {tag_str}".rstrip())
         lines.append("")
 
     # ── 요약 section ──────────────────────────────────────────────────── #
