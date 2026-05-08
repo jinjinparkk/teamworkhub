@@ -193,27 +193,28 @@ def daily(
                     log.warning("individual note write failed",
                                 extra={"run_id": run_id, "error": str(exc)})
 
-    # ── Precise time filtering ─────────────────────────────────────── #
-    # Gmail's `after:` may round epoch timestamps to midnight, and
-    # archive date ranges are day-level.  Drop messages before period_start.
-    period_start_utc = period_start.astimezone(timezone.utc)
-    before_filter = len(messages_with_summaries)
-    filtered: list[tuple] = []
-    for msg, ar in messages_with_summaries:
-        if not msg.date_utc:
-            filtered.append((msg, ar))
-            continue
-        try:
-            if datetime.fromisoformat(msg.date_utc) >= period_start_utc:
+        # ── Precise time filtering (Gmail only) ───────────────────── #
+        # Gmail's `after:` may round epoch timestamps to midnight.
+        # Drop messages before period_start.  Archive mode uses
+        # start_hour filtering instead, so this is Gmail-only.
+        period_start_utc = period_start.astimezone(timezone.utc)
+        before_filter = len(messages_with_summaries)
+        filtered: list[tuple] = []
+        for msg, ar in messages_with_summaries:
+            if not msg.date_utc:
                 filtered.append((msg, ar))
-        except (ValueError, TypeError):
-            filtered.append((msg, ar))
-    messages_with_summaries = filtered
-    if len(messages_with_summaries) < before_filter:
-        log.info("daily -- time-filtered",
-                 extra={"run_id": run_id,
-                        "before": before_filter,
-                        "after": len(messages_with_summaries)})
+                continue
+            try:
+                if datetime.fromisoformat(msg.date_utc) >= period_start_utc:
+                    filtered.append((msg, ar))
+            except (ValueError, TypeError):
+                filtered.append((msg, ar))
+        messages_with_summaries = filtered
+        if len(messages_with_summaries) < before_filter:
+            log.info("daily -- time-filtered",
+                     extra={"run_id": run_id,
+                            "before": before_filter,
+                            "after": len(messages_with_summaries)})
 
     email_count = len(messages_with_summaries)
     log.info("daily -- collection complete",
