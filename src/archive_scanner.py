@@ -186,14 +186,12 @@ def _yymmdd_to_iso(short: str) -> str:
 
 
 def _yymmddhh_to_iso(short: str) -> str:
-    """Convert ``YYMMDDHH`` → ``YYYY-MM-DD``, shifting to the next day if hour >= 18.
+    """Convert ``YYMMDDHH`` → ``YYYY-MM-DD`` (actual date, no shift).
 
-    e.g. '26050716' → '2026-05-07'  (16시 → 당일)
-         '26050718' → '2026-05-08'  (18시 → 다음날)
+    e.g. '26050716' → '2026-05-07'
+         '26050718' → '2026-05-07'
     """
     dt = datetime.strptime(short, "%y%m%d%H")
-    if dt.hour >= 18:
-        dt += timedelta(days=1)
     return dt.strftime("%Y-%m-%d")
 
 
@@ -421,6 +419,7 @@ def collect_archive_for_daily(
     local_dir: str,
     run_id: str,
     drive_output_folder_id: str = "",
+    start_hour: int | None = None,
 ) -> list[tuple]:
     """Collect archive folders within a date range for Daily Note generation.
 
@@ -433,6 +432,10 @@ def collect_archive_for_daily(
         local_dir:              Local Obsidian vault folder for individual notes.
         run_id:                 Correlation ID.
         drive_output_folder_id: Drive folder ID to upload individual notes to.
+        start_hour:             When set, folders on *date_start* are only
+                                included if they use YYMMDDHH format with
+                                hour >= start_hour.  YYMMDD / ISO folders
+                                on *date_start* are skipped (no hour info).
 
     Returns list of (ArchiveMessage, AnalysisResult) tuples compatible with
     compose_daily().
@@ -463,6 +466,22 @@ def collect_archive_for_daily(
 
         if date_str < date_start or date_str > date_end:
             continue
+
+        # Hour-based filtering for the start date (e.g. only 18:00+)
+        if (start_hour is not None
+                and date_str == date_start
+                and date_start != date_end):
+            m = _FOLDER_NAME_HOUR_RE.match(folder_name)
+            if m:
+                try:
+                    dt = datetime.strptime(m.group(1), "%y%m%d%H")
+                    if dt.hour < start_hour:
+                        continue
+                except ValueError:
+                    continue
+            else:
+                # YYMMDD / ISO format — no hour info; skip for start date
+                continue
 
         try:
             fr = _process_single_folder(

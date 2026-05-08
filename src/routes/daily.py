@@ -140,10 +140,11 @@ def daily(
     # archive as data source instead of Gmail.
     if c.drive_email_archive_folder_id:
         # Archive mode: scan Drive folders matching the date range.
-        # Archive folders only have date granularity (YYMMDD), so use the
-        # target date only.  Previous day's emails are already covered by
-        # that day's daily note; including them here would cause duplicates.
-        date_range_start = date_str
+        # Range covers range_start_day ~ today.  For YYMMDDHH folders on
+        # range_start_day only those with hour >= 18 are included; YYMMDD
+        # folders on range_start_day are skipped (no hour info — they
+        # belong to the previous day's daily note).
+        date_range_start = range_start_day.strftime("%Y-%m-%d")
         date_range_end = date_str
         log.info("daily -- using Drive archive",
                  extra={"run_id": run_id, "date_range": f"{date_range_start}~{date_range_end}"})
@@ -152,6 +153,7 @@ def daily(
             date_range_start, date_range_end,
             c.anthropic_api_key, c.local_output_dir, run_id,
             drive_output_folder_id=c.drive_output_folder_id,
+            start_hour=18,
         )
     else:
         # Gmail mode: collect overnight messages from all accounts.
@@ -190,6 +192,28 @@ def daily(
                 except Exception as exc:
                     log.warning("individual note write failed",
                                 extra={"run_id": run_id, "error": str(exc)})
+
+    # ── Precise time filtering ─────────────────────────────────────── #
+    # Gmail's `after:` may round epoch timestamps to midnight, and
+    # archive date ranges are day-level.  Drop messages before period_start.
+    period_start_utc = period_start.astimezone(timezone.utc)
+    before_filter = len(messages_with_summaries)
+    filtered: list[tuple] = []
+    for msg, ar in messages_with_summaries:
+        if not msg.date_utc:
+            filtered.append((msg, ar))
+            continue
+        try:
+            if datetime.fromisoformat(msg.date_utc) >= period_start_utc:
+                filtered.append((msg, ar))
+        except (ValueError, TypeError):
+            filtered.append((msg, ar))
+    messages_with_summaries = filtered
+    if len(messages_with_summaries) < before_filter:
+        log.info("daily -- time-filtered",
+                 extra={"run_id": run_id,
+                        "before": before_filter,
+                        "after": len(messages_with_summaries)})
 
     email_count = len(messages_with_summaries)
     log.info("daily -- collection complete",
