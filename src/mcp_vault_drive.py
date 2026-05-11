@@ -1,12 +1,12 @@
 """TeamWorkHub Vault — MCP server backed by Google Drive API.
 
-Drop-in replacement for mcp_vault.py (local filesystem) that runs on
-Cloud Run.  All 8 tool names and parameters are identical; only the
-internal storage layer changes from pathlib to Drive API calls.
+Drop-in replacement for mcp_vault.py (local filesystem) that uses
+Drive API instead of local pathlib.  All 8 tool names and parameters
+are identical.
 
-Mount via FastAPI:
-    mcp_app = mcp.http_app(path="/")
-    app.mount("/mcp", mcp_app)
+Usage:
+  - Cloud Run:  mounted via FastAPI (mcp.http_app, Streamable HTTP)
+  - Local:      python -m src.mcp_vault_drive  (stdio transport)
 """
 
 from __future__ import annotations
@@ -477,3 +477,23 @@ def update_frontmatter_field(path: str, field: str, value: str) -> str:
         return f"Frontmatter field `{field}` {action} in `{path}`."
 
     return _retry_on_401(_do)
+
+
+# ---------------------------------------------------------------------------
+# Entry point — stdio transport for Claude Desktop (local)
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import os
+    import sys
+
+    # Load .env when running locally (python-dotenv is a dev dependency).
+    try:
+        from dotenv import load_dotenv
+
+        env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+        load_dotenv(env_path)
+    except ImportError:
+        pass
+
+    mcp.run(transport="stdio")
