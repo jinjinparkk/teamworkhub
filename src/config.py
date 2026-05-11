@@ -75,6 +75,14 @@ class Config:
     # Assignee pages are also auto-written on each POST /daily run.
     local_dashboard_dir: str = ""       # Local folder for Dashboard.md + assignee pages
 
+    # ── Dashboard Drive folder (optional) ──────────────────────────────── #
+    # Drive folder for Dashboard.md + per-assignee pages (used by MCP vault).
+    dashboard_output_folder_id: str = ""  # Drive folder for TeamWorkHub_Dashboard
+
+    # ── MCP API key (optional) ───────────────────────────────────────── #
+    # Bearer token for authenticating MCP Streamable HTTP requests.
+    mcp_api_key: str = ""
+
     # ── Drive email archive scan (optional) ────────────────────────────── #
     # POST /scan-archive reads mail folders from a shared Drive folder.
     drive_email_archive_folder_id: str = ""  # parent folder containing date_sender_subject subfolders
@@ -132,6 +140,8 @@ def load() -> Config:
         monthly_output_folder_id=os.environ.get("MONTHLY_OUTPUT_FOLDER_ID", ""),
         local_monthly_output_dir=os.environ.get("LOCAL_MONTHLY_OUTPUT_DIR", ""),
         local_dashboard_dir=os.environ.get("LOCAL_DASHBOARD_DIR", ""),
+        dashboard_output_folder_id=os.environ.get("DASHBOARD_OUTPUT_FOLDER_ID", ""),
+        mcp_api_key=os.environ.get("MCP_API_KEY", ""),
         drive_email_archive_folder_id=os.environ.get("DRIVE_EMAIL_ARCHIVE_FOLDER_ID", ""),
         backup_output_folder_id=os.environ.get("BACKUP_OUTPUT_FOLDER_ID", ""),
     )
