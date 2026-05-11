@@ -29,6 +29,9 @@ if TYPE_CHECKING:
 _THREAD_PREFIX_RE = re.compile(
     r"^(?:re|fw|fwd|회신|전달|답장|답변)\s*:\s*", flags=re.IGNORECASE
 )
+# Archive-style reply numbering: RE_(2), FW_(4), (3) etc.
+_REPLY_NUM_RE = re.compile(r"\b(?:RE|FW|FWD)_\(\d+\)\s*", flags=re.IGNORECASE)
+_PAREN_NUM_RE = re.compile(r"\(\d+\)\s*")
 
 # 요일별 정기 업무 (0=월 ~ 4=금, 5=토/6=일은 항목 없음)
 _RECURRING_TASKS: dict[int, str] = {
@@ -87,15 +90,27 @@ def _normalise_subject(subject: str) -> str:
 
 
 # Words too short or too common to be meaningful for subject similarity.
-_SIMILARITY_MIN_WORD_LEN = 3
+_SIMILARITY_MIN_WORD_LEN = 2
 # Date-like tokens (YYYY-MM-DD, YYMMDD) are stripped by this regex.
 _DATE_TOKEN_RE = re.compile(r"\b(?:\d{4}-\d{2}-\d{2}|\d{6})\b")
 
 
+def _thread_key(subject: str) -> str:
+    """Return a normalised key for reply-chain grouping.
+
+    Strips dates, RE:/FW: prefixes, RE_(N)/(N) numbering, and lowercases.
+    Emails in the same thread produce the same key regardless of sender.
+    """
+    s = _normalise_subject(subject)          # strip RE:/FW: prefixes
+    s = _DATE_TOKEN_RE.sub("", s)            # strip YYYY-MM-DD / YYMMDD
+    s = _REPLY_NUM_RE.sub("", s)             # strip RE_(2), FW_(4)
+    s = _PAREN_NUM_RE.sub("", s)             # strip standalone (3)
+    return " ".join(s.split()).strip()
+
+
 def _subject_keywords(subject: str) -> set[str]:
     """Extract meaningful keywords from an email subject for similarity check."""
-    s = _normalise_subject(subject)
-    s = _DATE_TOKEN_RE.sub("", s)
+    s = _thread_key(subject)
     return {w for w in s.split() if len(w) >= _SIMILARITY_MIN_WORD_LEN}
 
 
@@ -105,16 +120,22 @@ def _find_similar_wiki(wiki_name: str, sender: str,
 
     *seen* maps wiki_name → (sender, keywords).
     Returns the matching wiki_name if similar, else None.
+
+    Two matching modes:
+      1. Same sender + 2 common keywords (original logic)
+      2. Any sender + 3 common keywords (reply-chain across senders)
     """
     kw_new = _subject_keywords(wiki_name)
     if len(kw_new) < 2:
         return None
     sender_norm = sender.strip().lower()
     for existing_wiki, (existing_sender, existing_kw) in seen.items():
-        if existing_sender != sender_norm:
-            continue
         common = kw_new & existing_kw
-        if len(common) >= 2:
+        # Same sender: 2 keywords enough
+        if existing_sender == sender_norm and len(common) >= 2:
+            return existing_wiki
+        # Different sender: need 3+ keywords (high confidence reply chain)
+        if len(common) >= 3:
             return existing_wiki
     return None
 
@@ -146,6 +167,13 @@ def compose_daily(
     """
     tz_short = timezone_name.split("/")[-1] if "/" in timezone_name else timezone_name
     note_date = _date.fromisoformat(date_str)
+
+    # Sort messages newest-first so reply-chain dedup keeps the latest reply.
+    messages = sorted(
+        messages,
+        key=lambda pair: getattr(pair[0], "subject", "") or "",
+        reverse=True,
+    )
 
     lines: list[str] = []
 
@@ -337,6 +365,13 @@ def merge_daily(
         timezone_name.split("/")[-1] if "/" in timezone_name else timezone_name
     )
 
+    # Sort messages newest-first so reply-chain dedup keeps the latest reply.
+    messages = sorted(
+        messages,
+        key=lambda pair: getattr(pair[0], "subject", "") or "",
+        reverse=True,
+    )
+
     # ── Detect existing wiki-links ───────────────────────────────────── #
     existing_links = _extract_wiki_links(existing_content)
     existing_base_names: set[str] = set()
@@ -360,7 +395,7 @@ def merge_daily(
         # Exact match dedup
         if wiki_name in seen_wiki:
             continue
-        # Subject similarity dedup (same sender + 2+ common keywords)
+        # Reply-chain dedup (same thread → keep newest, already sorted)
         if _find_similar_wiki(wiki_name, sender, seen_wiki):
             continue
         seen_wiki[wiki_name] = (sender.strip().lower(), _subject_keywords(wiki_name))
