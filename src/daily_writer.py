@@ -265,6 +265,11 @@ def compose_daily(
         lines.append("- (없음)")
     lines.append("")
 
+    # ── Work log ──────────────────────────────────────────────────── #
+    lines.append("#### Work log")
+    lines.append("- ")
+    lines.append("")
+
     # ── 미완료 (Tasks plugin) ─────────────────────────────────────── #
     lines.append("### 미완료")
     lines.append("")
@@ -511,6 +516,19 @@ def merge_daily(
     for i, line in enumerate(lines):
         if line.strip() == "#### Detailed_list":
             lines[i] = "#### 업무 상세"
+
+    # Ensure "Work log" section exists (between 정기적인 일 and 미완료)
+    has_worklog = any(line.strip() == "#### Work log" for line in lines)
+    if not has_worklog:
+        insert_idx = None
+        for i, line in enumerate(lines):
+            if line.strip() == "### 미완료":
+                insert_idx = i
+                break
+        if insert_idx is not None:
+            worklog_lines = ["#### Work log", "- ", ""]
+            for j, wl in enumerate(worklog_lines):
+                lines.insert(insert_idx + j, wl)
 
     # Migrate Dataview TASK → Tasks plugin (Dataview has checkbox toggle bugs)
     _dv_folder = note_folder or "TeamWorkHub"
