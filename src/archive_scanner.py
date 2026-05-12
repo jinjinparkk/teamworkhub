@@ -21,6 +21,7 @@ from src.assignee import extract_assignees
 from src.drive_client import (
     download_file_bytes,
     download_file_content,
+    find_file_by_name,
     list_files_in_folder,
     list_subfolders,
     upsert_markdown,
@@ -290,6 +291,17 @@ def _process_single_folder(
         except Exception:
             pass
 
+    # 1b. Drive fallback (Cloud Run — no local filesystem)
+    if preserved_fields is None and drive_output_folder_id:
+        try:
+            existing_file = find_file_by_name(drive_svc, local_filename, drive_output_folder_id)
+            if existing_file:
+                existing_text = download_file_content(drive_svc, existing_file.file_id)
+                preserved_fields = parse_preserved_fields(existing_text)
+                checked_todos = parse_todo_checks(existing_text)
+        except Exception:
+            pass
+
     # 2. Download 본문.md — raises on failure
     #    Some archive folders use numbered variants: [1] 본문.md, [2] 본문.md
     #    Prefer exact "본문.md", then fall back to the highest-numbered variant.
@@ -355,6 +367,18 @@ def _process_single_folder(
             )
             if existing_items:
                 analysis.action_items = existing_items
+        except Exception:
+            pass
+    elif not local_already_existed and drive_output_folder_id:
+        # Drive fallback for To-do items (Cloud Run)
+        try:
+            existing_file = find_file_by_name(drive_svc, local_filename, drive_output_folder_id)
+            if existing_file:
+                existing_items = parse_todo_items(
+                    download_file_content(drive_svc, existing_file.file_id)
+                )
+                if existing_items:
+                    analysis.action_items = existing_items
         except Exception:
             pass
 
