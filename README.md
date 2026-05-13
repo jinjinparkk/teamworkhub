@@ -406,37 +406,37 @@ gcloud run services add-iam-policy-binding teamworkhub \
   --member="serviceAccount:${SA}@${PROJECT_ID}.iam.gserviceaccount.com" \
   --role="roles/run.invoker"
 
-# 잡 1: 개별 메일 동기화 — 평일 08:00 KST
+# 잡 1: 개별 메일 동기화 — 평일 09:20, 13:20, 16:20, 19:20 KST
 gcloud scheduler jobs create http teamworkhub-sync \
   --location $REGION \
-  --schedule "0 8 * * 1-5" \
+  --schedule "20 9,13,16,19 * * 1-5" \
   --time-zone "Asia/Seoul" \
   --uri "${SERVICE_URL}/sync" \
   --http-method POST \
   --oidc-service-account-email "${SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 
-# 잡 2: 일간 다이제스트 — 평일 09:00 KST
+# 잡 2: 일간 다이제스트 — 평일 09:30, 13:30, 16:30, 19:30 KST (sync 10분 후)
 gcloud scheduler jobs create http teamworkhub-daily \
   --location $REGION \
-  --schedule "0 9 * * 1-5" \
+  --schedule "30 9,13,16,19 * * 1-5" \
   --time-zone "Asia/Seoul" \
   --uri "${SERVICE_URL}/daily" \
   --http-method POST \
   --oidc-service-account-email "${SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 
-# 잡 3: 주간 리포트 — 매주 금요일 18:00 KST
+# 잡 3: 주간 리포트 — 매주 월요일 09:00 KST
 gcloud scheduler jobs create http teamworkhub-weekly \
   --location $REGION \
-  --schedule "0 18 * * 5" \
+  --schedule "0 9 * * 1" \
   --time-zone "Asia/Seoul" \
   --uri "${SERVICE_URL}/weekly" \
   --http-method POST \
   --oidc-service-account-email "${SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 
-# 잡 4: 월간 리포트 — 매월 마지막 날 17:00 KST
+# 잡 4: 월간 리포트 — 매월 1일 09:00 KST
 gcloud scheduler jobs create http teamworkhub-monthly \
   --location $REGION \
-  --schedule "0 17 28-31 * *" \
+  --schedule "0 9 1 * *" \
   --time-zone "Asia/Seoul" \
   --uri "${SERVICE_URL}/monthly" \
   --http-method POST \
