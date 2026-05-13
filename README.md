@@ -406,19 +406,19 @@ gcloud run services add-iam-policy-binding teamworkhub \
   --member="serviceAccount:${SA}@${PROJECT_ID}.iam.gserviceaccount.com" \
   --role="roles/run.invoker"
 
-# 잡 1: 개별 메일 동기화 — 평일 09:20, 13:20, 16:20, 19:20 KST
+# 잡 1: 개별 메일 동기화 — 평일 08:20, 09:20, 13:20, 16:20, 19:20 KST
 gcloud scheduler jobs create http teamworkhub-sync \
   --location $REGION \
-  --schedule "20 9,13,16,19 * * 1-5" \
+  --schedule "20 8,9,13,16,19 * * 1-5" \
   --time-zone "Asia/Seoul" \
   --uri "${SERVICE_URL}/sync" \
   --http-method POST \
   --oidc-service-account-email "${SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 
-# 잡 2: 일간 다이제스트 — 평일 09:30, 13:30, 16:30, 19:30 KST (sync 10분 후)
+# 잡 2: 일간 다이제스트 — 평일 08:30, 09:30, 13:30, 16:30, 19:30 KST (sync 10분 후)
 gcloud scheduler jobs create http teamworkhub-daily \
   --location $REGION \
-  --schedule "30 9,13,16,19 * * 1-5" \
+  --schedule "30 8,9,13,16,19 * * 1-5" \
   --time-zone "Asia/Seoul" \
   --uri "${SERVICE_URL}/daily" \
   --http-method POST \
